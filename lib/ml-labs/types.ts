@@ -1,4 +1,8 @@
 export type ProblemType = "classification" | "regression";
+export type ProblemTaskSubtype =
+  | "binary_classification"
+  | "multiclass_classification"
+  | "regression";
 export type AgentStatus = "queued" | "running" | "complete" | "warning" | "failed";
 export type VisualizationType =
   | "actual_vs_predicted"
@@ -7,6 +11,7 @@ export type VisualizationType =
   | "feature_importance"
   | "confusion_matrix"
   | "experiment_graph"
+  | "feature_type_breakdown"
   | "missingness_summary"
   | "model_comparison"
   | "pr_curve"
@@ -14,6 +19,7 @@ export type VisualizationType =
   | "roc_curve";
 
 export type PredictionInputKind = "boolean" | "number" | "string";
+export type ResolvedSourceKind = "upload" | "kaggle";
 
 export type DatasetProfile = {
   rows: number;
@@ -54,6 +60,19 @@ export type BestModelSummary = {
   whyItWon: string;
 };
 
+export type ProblemFraming = {
+  targetName: string;
+  taskSubtype: ProblemTaskSubtype;
+  primaryMetric: string;
+  rationale: string;
+};
+
+export type PlainEnglishSummary = {
+  headline: string;
+  shortExplanation: string;
+  takeaways: string[];
+};
+
 export type CriticReport = {
   warnings: string[];
   failureModes: string[];
@@ -82,6 +101,7 @@ export type LabRunResult = {
   runId: string;
   scenario?: ProblemType;
   datasetProfile: DatasetProfile;
+  problemFraming: ProblemFraming;
   agentTrace: AgentTraceItem[];
   leaderboard: LeaderboardEntry[];
   bestModel: BestModelSummary;
@@ -89,12 +109,39 @@ export type LabRunResult = {
   visualizations: Visualization[];
   predictionInputSchema?: PredictionInputSchema;
   artifacts: LabArtifact[];
+  plainEnglishSummary: PlainEnglishSummary;
   finalReportMarkdown: string;
 };
 
 export type LabRunError = {
   error: string;
   details?: string;
+};
+
+export type ResolvedSourceFile = {
+  path: string;
+  rowCount?: number;
+  columnCount?: number;
+  selected?: boolean;
+};
+
+export type TargetSuggestion = {
+  column: string;
+  confidence: number;
+  reason: string;
+};
+
+export type SourceResolveResult = {
+  sourceToken: string;
+  sourceKind: ResolvedSourceKind;
+  sourceLabel: string;
+  normalizedKaggleDataset?: string;
+  selectedFilePath?: string;
+  candidateFiles: ResolvedSourceFile[];
+  headers: string[];
+  previewRows: string[][];
+  targetSuggestions: TargetSuggestion[];
+  messages: AgentTraceItem[];
 };
 
 export type PredictionInputField = {
@@ -143,5 +190,19 @@ export type PythonRunnerResult = {
     sourceKind?: "upload" | "kaggle";
     sourceLabel?: string;
     sourcePath?: string;
+    targetCardinality?: number;
   };
+};
+
+export type PythonInspectResult = {
+  sourceKind: ResolvedSourceKind;
+  sourceLabel: string;
+  normalizedKaggleDataset?: string;
+  selectedFilePath?: string;
+  candidateFiles: ResolvedSourceFile[];
+  headers: string[];
+  previewRows: string[][];
+  targetSuggestions: TargetSuggestion[];
+  messages: AgentTraceItem[];
+  csvPath?: string;
 };

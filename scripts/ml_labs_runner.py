@@ -72,6 +72,19 @@ def parse_args() -> argparse.Namespace:
     train_parser.add_argument("--run-id", required=True, help="Run identifier for bundle storage.")
     train_parser.add_argument("--bundle-dir", required=True, help="Directory for runtime model artifacts.")
 
+    inspect_parser = subparsers.add_parser("inspect", help="Resolve a dataset source and emit preview metadata.")
+    inspect_parser.add_argument("--csv", required=False, help="Path to the CSV file.")
+    inspect_parser.add_argument(
+        "--kaggle-input",
+        required=False,
+        help="Kaggle slug, URL, or pasted KaggleHub snippet.",
+    )
+    inspect_parser.add_argument(
+        "--selected-file-path",
+        required=False,
+        help="Specific CSV file to select from a multi-file Kaggle dataset.",
+    )
+
     predict_parser = subparsers.add_parser("predict", help="Score one new row from a saved runtime bundle.")
     predict_parser.add_argument("--bundle-dir", required=True, help="Directory containing the runtime bundle.")
     predict_parser.add_argument("--run-id", required=True, help="Run identifier for the prediction response.")
@@ -322,34 +335,39 @@ def build_visualizations(
     categorical_columns: list[str],
 ) -> list[dict[str, Any]]:
     visualizations: list[dict[str, Any]] = [
+        build_feature_type_breakdown_visualization(X_full),
         {
             "id": "experiment-graph",
-            "stageId": "evaluation",
+            "stageId": "export",
             "type": "experiment_graph",
             "title": "ML-Labs experiment graph",
             "data": {
                 "nodes": [
-                    "Data Profile",
-                    "Schema Validation",
-                    "Target Analysis",
+                    "Source Intake",
+                    "Source Resolution",
+                    "Schema Profiling",
+                    "Target Framing",
                     "Preprocessing",
                     "Baseline",
                     "Linear Model",
                     "Tree Model",
-                    "Best Model",
+                    "Boosted Model",
+                    "Evaluation",
                     "Critic",
-                    "Report",
+                    "Export",
                 ],
                 "edges": [
-                    ["Data Profile", "Schema Validation"],
-                    ["Schema Validation", "Target Analysis"],
-                    ["Target Analysis", "Preprocessing"],
+                    ["Source Intake", "Source Resolution"],
+                    ["Source Resolution", "Schema Profiling"],
+                    ["Schema Profiling", "Target Framing"],
+                    ["Target Framing", "Preprocessing"],
                     ["Preprocessing", "Baseline"],
                     ["Baseline", "Linear Model"],
                     ["Linear Model", "Tree Model"],
-                    ["Tree Model", "Best Model"],
-                    ["Best Model", "Critic"],
-                    ["Critic", "Report"],
+                    ["Tree Model", "Boosted Model"],
+                    ["Boosted Model", "Evaluation"],
+                    ["Evaluation", "Critic"],
+                    ["Critic", "Export"],
                 ],
             },
         },
@@ -391,6 +409,31 @@ def build_visualizations(
     return [visualization for visualization in visualizations if visualization is not None]
 
 
+def build_feature_type_breakdown_visualization(X: pd.DataFrame) -> dict[str, Any]:
+    numeric_columns = X.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_columns = [column for column in X.columns if column not in numeric_columns]
+    total = max(len(X.columns), 1)
+
+    return {
+        "id": "feature-type-breakdown",
+        "stageId": "schema-profiling",
+        "type": "feature_type_breakdown",
+        "title": "Feature family breakdown",
+        "data": [
+            {
+                "label": "numeric",
+                "count": len(numeric_columns),
+                "ratio": round(len(numeric_columns) / total, 4),
+            },
+            {
+                "label": "categorical",
+                "count": len(categorical_columns),
+                "ratio": round(len(categorical_columns) / total, 4),
+            },
+        ],
+    }
+
+
 def normalize_kaggle_identifier(dataset: str | None, url: str | None) -> str | None:
     if dataset and dataset.strip():
         normalized = dataset.strip().strip("/")
@@ -422,6 +465,56 @@ def normalize_kaggle_identifier(dataset: str | None, url: str | None) -> str | N
     return f"{owner}/{dataset_slug}"
 
 
+def parse_kaggle_input(raw_input: str | None) -> tuple[str | None, str | None]:
+    if not raw_input or not raw_input.strip():
+        return None, None
+
+    normalized_input = raw_input.strip()
+    embedded_file_path = extract_kaggle_file_path(normalized_input)
+
+    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", normalized_input.strip("/")):
+        return normalized_input.strip("/"), embedded_file_path
+
+    if "kaggle.com/datasets/" in normalized_input:
+        return normalize_kaggle_identifier(None, normalized_input), embedded_file_path
+
+    download_match = re.search(
+        r'dataset_download\(\s*["\']([^"\']+/[^"\']+)["\']',
+        normalized_input,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if download_match:
+        return download_match.group(1).strip(), embedded_file_path
+
+    load_match = re.search(
+        r'load_dataset\((?:.|\n)*?["\']([^"\']+/[^"\']+)["\']',
+        normalized_input,
+        re.IGNORECASE,
+    )
+    if load_match:
+        return load_match.group(1).strip(), embedded_file_path
+
+    raise ValueError(
+        "Kaggle input must be a dataset slug, a Kaggle dataset URL, or a KaggleHub code snippet."
+    )
+
+
+def extract_kaggle_file_path(raw_input: str) -> str | None:
+    file_match = re.search(
+        r'file_path\s*=\s*["\']([^"\']+)["\']',
+        raw_input,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if file_match:
+        return file_match.group(1).strip()
+
+    return None
+
+
+def collect_kaggle_csv_candidates(dataset_dir: Path) -> list[Path]:
+    return sorted(path for path in dataset_dir.rglob("*.csv") if path.is_file())
+
+
 def select_kaggle_csv(
     dataset_dir: Path,
     target_column: str,
@@ -441,7 +534,7 @@ def select_kaggle_csv(
             raise ValueError("Kaggle file paths must point to a CSV file.")
         return candidate
 
-    csv_files = sorted(path for path in dataset_dir.rglob("*.csv") if path.is_file())
+    csv_files = collect_kaggle_csv_candidates(dataset_dir)
     if not csv_files:
         raise ValueError("The Kaggle dataset does not contain any CSV files.")
 
@@ -496,10 +589,185 @@ def resolve_training_source(args: argparse.Namespace) -> tuple[Path, dict[str, s
     }
 
 
+def resolve_inspection_source(args: argparse.Namespace) -> tuple[Path | None, dict[str, Any]]:
+    if args.csv:
+        csv_path = Path(args.csv).expanduser().resolve()
+        return csv_path, {
+            "sourceKind": "upload",
+            "sourceLabel": csv_path.name,
+            "candidateFiles": [
+                {
+                    "path": csv_path.name,
+                    "selected": True,
+                }
+            ],
+        }
+
+    kaggle_identifier, snippet_file_path = parse_kaggle_input(args.kaggle_input)
+    if kaggle_identifier is None:
+        raise ValueError("Provide either a CSV file or a Kaggle reference to inspect.")
+
+    dataset_dir = Path(kagglehub.dataset_download(kaggle_identifier))
+    selected_file_path = args.selected_file_path or snippet_file_path
+    candidate_files = collect_kaggle_csv_candidates(dataset_dir)
+    if not candidate_files:
+        raise ValueError("The Kaggle dataset does not contain any CSV files.")
+
+    selected_csv: Path | None = None
+    if selected_file_path:
+        selected_csv = validate_kaggle_csv_choice(dataset_dir, selected_file_path)
+    elif len(candidate_files) == 1:
+        selected_csv = candidate_files[0]
+
+    return selected_csv, {
+        "sourceKind": "kaggle",
+        "sourceLabel": f'Kaggle dataset "{kaggle_identifier}"',
+        "normalizedKaggleDataset": kaggle_identifier,
+        "datasetDir": dataset_dir,
+        "candidateFiles": build_candidate_file_rows(dataset_dir, candidate_files, selected_csv),
+    }
+
+
+def validate_kaggle_csv_choice(dataset_dir: Path, selected_file_path: str) -> Path:
+    requested_relative = Path(selected_file_path.strip())
+    candidate = (dataset_dir / requested_relative).resolve()
+    dataset_root = dataset_dir.resolve()
+    if dataset_root not in candidate.parents and candidate != dataset_root:
+        raise ValueError("Selected Kaggle file paths must stay inside the downloaded dataset directory.")
+    if not candidate.exists() or candidate.suffix.lower() != ".csv":
+        raise ValueError(f"Kaggle CSV file '{selected_file_path}' was not found in the dataset.")
+    return candidate
+
+
+def build_candidate_file_rows(
+    dataset_dir: Path,
+    csv_files: list[Path],
+    selected_csv: Path | None,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for csv_file in csv_files[:20]:
+        relative_path = str(csv_file.relative_to(dataset_dir))
+        headers, preview_rows = read_csv_preview(csv_file)
+        rows.append(
+            {
+                "path": relative_path,
+                "columnCount": len(headers),
+                "rowCount": len(preview_rows),
+                "selected": selected_csv is not None and csv_file.resolve() == selected_csv.resolve(),
+            }
+        )
+    return rows
+
+
+def read_csv_preview(csv_path: Path) -> tuple[list[str], list[list[str]]]:
+    preview_frame = pd.read_csv(csv_path, nrows=12, dtype=str).fillna("")
+    headers = [str(column) for column in preview_frame.columns.tolist()]
+    preview_rows = preview_frame.head(10).astype(str).values.tolist()
+    return headers, preview_rows
+
+
+def build_target_suggestions(df: pd.DataFrame) -> list[dict[str, Any]]:
+    preferred_names = {
+        "target": "Common target naming convention.",
+        "label": "Common label naming convention.",
+        "class": "Common class naming convention.",
+        "outcome": "Common outcome naming convention.",
+        "y": "Short target naming convention.",
+        "type": "Often used as a prediction label.",
+        "churn": "Frequently used as a prediction target.",
+        "charges": "Frequently used as a numeric prediction target.",
+        "price": "Frequently used as a numeric prediction target.",
+    }
+
+    suggestions: list[dict[str, Any]] = []
+    last_index = max(len(df.columns) - 1, 0)
+    for index, column in enumerate(df.columns.tolist()):
+        series = df[column]
+        column_name = str(column)
+        normalized = column_name.lower().strip()
+        unique_count = int(series.nunique(dropna=True))
+        unique_ratio = unique_count / max(len(series), 1)
+        numeric = pd.api.types.is_numeric_dtype(series)
+
+        score = 0.0
+        reasons: list[str] = []
+
+        if normalized in preferred_names:
+            score += 0.65
+            reasons.append(preferred_names[normalized])
+
+        if normalized.endswith("id") or normalized == "id":
+            score -= 0.45
+            reasons.append("Looks like an identifier, which is usually not a prediction target.")
+
+        if numeric and unique_count > 10 and unique_ratio > 0.05:
+            score += 0.25
+            reasons.append("Numeric values vary enough to behave like a regression target.")
+        elif 2 <= unique_count <= 12:
+            score += 0.22
+            reasons.append("Category count is small enough to behave like a classification target.")
+
+        if unique_ratio > 0.98:
+            score -= 0.2
+            reasons.append("Almost every value is unique, which often signals an ID-like column.")
+
+        if index == last_index:
+            score += 0.12
+            reasons.append("It appears as the last column, which is a common target placement.")
+
+        suggestions.append(
+            {
+                "column": column_name,
+                "confidence": round(max(0.05, min(score + 0.35, 0.99)), 2),
+                "reason": reasons[0] if reasons else "This column is a plausible prediction target.",
+            }
+        )
+
+    suggestions.sort(key=lambda item: item["confidence"], reverse=True)
+    return suggestions[:5]
+
+
+def build_inspection_messages(
+    source_metadata: dict[str, Any],
+    csv_path: Path | None,
+    headers: list[str],
+) -> list[dict[str, Any]]:
+    messages = [
+        {
+            "agent": "Source Intake Agent",
+            "stageId": "source-intake",
+            "status": "complete",
+            "message": f'Accepted {source_metadata["sourceLabel"]} as the active dataset source.',
+        },
+        {
+            "agent": "Source Resolution Agent",
+            "stageId": "source-resolution",
+            "status": "complete" if csv_path is not None else "warning",
+            "message": (
+                f"Resolved working table {csv_path.name} and exposed {len(headers)} columns for target selection."
+                if csv_path is not None
+                else "Found multiple candidate CSV tables. Choose one table to continue into profiling."
+            ),
+        },
+    ]
+
+    if csv_path is not None:
+        messages.append(
+            {
+                "agent": "Schema Profiling Agent",
+                "stageId": "schema-profiling",
+                "status": "complete",
+                "message": f"Previewed {len(headers)} columns and prepared target suggestions from the resolved table.",
+            }
+        )
+
+    return messages
+
+
 def build_missingness_visualization(df: pd.DataFrame) -> dict[str, Any]:
     return {
         "id": "missingness-summary",
-        "stageId": "profiling",
+        "stageId": "schema-profiling",
         "type": "missingness_summary",
         "title": "Missing value summary",
         "data": [
@@ -517,7 +785,7 @@ def build_class_balance_visualization(y: pd.Series) -> dict[str, Any]:
     counts = y.astype(str).value_counts(dropna=False)
     return {
         "id": "class-balance",
-        "stageId": "profiling",
+        "stageId": "target-framing",
         "type": "class_balance",
         "title": "Target class balance",
         "data": [
@@ -537,7 +805,7 @@ def build_correlation_visualization(X: pd.DataFrame) -> dict[str, Any]:
     if not columns:
         return {
             "id": "correlation-heatmap",
-            "stageId": "profiling",
+            "stageId": "schema-profiling",
             "type": "correlation_heatmap",
             "title": "Numeric feature correlation heatmap",
             "data": {"columns": [], "matrix": []},
@@ -546,7 +814,7 @@ def build_correlation_visualization(X: pd.DataFrame) -> dict[str, Any]:
     correlation_matrix = numeric.corr().fillna(0).round(3)
     return {
         "id": "correlation-heatmap",
-        "stageId": "profiling",
+        "stageId": "schema-profiling",
         "type": "correlation_heatmap",
         "title": "Numeric feature correlation heatmap",
         "data": {
@@ -873,6 +1141,7 @@ def train_mode(args: argparse.Namespace) -> None:
             "targetStd": round(float(pd.to_numeric(y, errors="coerce").dropna().std()), 3)
             if problem_type == "regression"
             else None,
+            "targetCardinality": int(y.nunique(dropna=True)),
             "modelFailures": model_failures,
             "intentPrompt": args.intent,
             "sourceKind": source_metadata["sourceKind"],
@@ -880,6 +1149,38 @@ def train_mode(args: argparse.Namespace) -> None:
             "sourcePath": source_metadata["sourcePath"],
             "trainingNote": f"Best model selected from {len(leaderboard)} successful candidates.",
         },
+    }
+
+    print(json.dumps(sanitize_for_json(result), allow_nan=False))
+
+
+def inspect_mode(args: argparse.Namespace) -> None:
+    csv_path, source_metadata = resolve_inspection_source(args)
+
+    headers: list[str] = []
+    preview_rows: list[list[str]] = []
+    target_suggestions: list[dict[str, Any]] = []
+
+    if csv_path is not None:
+        preview_frame = pd.read_csv(csv_path, nrows=32)
+        preview_frame = preview_frame.fillna("")
+        headers = [str(column) for column in preview_frame.columns.tolist()]
+        preview_rows = preview_frame.head(12).astype(str).values.tolist()
+        target_suggestions = build_target_suggestions(preview_frame)
+
+    result = {
+        "sourceKind": source_metadata["sourceKind"],
+        "sourceLabel": source_metadata["sourceLabel"],
+        "normalizedKaggleDataset": source_metadata.get("normalizedKaggleDataset"),
+        "selectedFilePath": str(csv_path.relative_to(source_metadata["datasetDir"]))
+        if csv_path is not None and source_metadata["sourceKind"] == "kaggle"
+        else (str(csv_path.name) if csv_path is not None else None),
+        "candidateFiles": source_metadata["candidateFiles"],
+        "headers": headers,
+        "previewRows": preview_rows,
+        "targetSuggestions": target_suggestions,
+        "messages": build_inspection_messages(source_metadata, csv_path, headers),
+        "csvPath": str(csv_path) if csv_path is not None else None,
     }
 
     print(json.dumps(sanitize_for_json(result), allow_nan=False))
@@ -1078,6 +1379,10 @@ def sanitize_for_json(value: Any) -> Any:
 
 def main() -> None:
     args = parse_args()
+    if args.mode == "inspect":
+        inspect_mode(args)
+        return
+
     if args.mode == "train":
         train_mode(args)
         return
