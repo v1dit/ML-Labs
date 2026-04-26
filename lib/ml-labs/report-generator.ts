@@ -5,7 +5,10 @@ import type {
   LabArtifact,
   LabRunResult,
   LeaderboardEntry,
+  PlainEnglishSummary,
   PredictionInputSchema,
+  ProblemFraming,
+  ProblemTaskSubtype,
   ProblemType,
 } from "@/lib/ml-labs/types";
 
@@ -19,6 +22,7 @@ type ReportBuildInput = {
   leaderboard: LeaderboardEntry[];
   criticReport: CriticReport;
   predictionInputSchema?: PredictionInputSchema;
+  targetCardinality?: number;
 };
 
 export function buildBestModelSummary(
@@ -82,8 +86,14 @@ export function buildFinalReportMarkdown({
   leaderboard,
   criticReport,
   predictionInputSchema,
+  targetCardinality,
 }: ReportBuildInput): string {
   const bestModel = buildBestModelSummary(datasetProfile, leaderboard);
+  const problemFraming = buildProblemFraming(
+    datasetProfile,
+    leaderboard,
+    targetCardinality,
+  );
   const leaderboardTable = leaderboard
     .map(
       (entry) =>
@@ -108,6 +118,8 @@ ${intentLine}
 - Columns: ${datasetProfile.columns}
 - Target column: ${datasetProfile.targetColumn}
 - Problem type: ${datasetProfile.problemType}
+- Task framing: ${humanizeTaskSubtype(problemFraming.taskSubtype)}
+- Primary metric: ${problemFraming.primaryMetric}
 - Numeric columns: ${datasetProfile.numericColumns.join(", ") || "None"}
 - Categorical columns: ${datasetProfile.categoricalColumns.join(", ") || "None"}
 - Target summary: ${datasetProfile.targetSummary}
@@ -126,6 +138,11 @@ ${leaderboardTable}
 - Absolute improvement: ${bestModel.absoluteImprovement.toFixed(3)}
 - Relative improvement: ${bestModel.relativeImprovement.toFixed(2)}%
 - Why it won: ${bestModel.whyItWon}
+
+## Plain-English Outcome
+
+- ${buildPlainEnglishSummary(datasetProfile, leaderboard, criticReport, targetCardinality).headline}
+- ${buildPlainEnglishSummary(datasetProfile, leaderboard, criticReport, targetCardinality).shortExplanation}
 
 ## Critic Report
 
@@ -157,12 +174,24 @@ export function buildCompleteRun(
   overrides: Pick<LabRunResult, "agentTrace" | "visualizations">,
 ): LabRunResult {
   const bestModel = buildBestModelSummary(input.datasetProfile, input.leaderboard);
+  const problemFraming = buildProblemFraming(
+    input.datasetProfile,
+    input.leaderboard,
+    input.targetCardinality,
+  );
+  const plainEnglishSummary = buildPlainEnglishSummary(
+    input.datasetProfile,
+    input.leaderboard,
+    input.criticReport,
+    input.targetCardinality,
+  );
   const finalReportMarkdown = buildFinalReportMarkdown(input);
 
   return {
     runId: input.runId,
     scenario: input.scenario,
     datasetProfile: input.datasetProfile,
+    problemFraming,
     agentTrace: overrides.agentTrace,
     leaderboard: input.leaderboard,
     bestModel,
@@ -170,7 +199,52 @@ export function buildCompleteRun(
     visualizations: overrides.visualizations,
     predictionInputSchema: input.predictionInputSchema,
     artifacts: buildArtifacts(input, bestModel, finalReportMarkdown),
+    plainEnglishSummary,
     finalReportMarkdown,
+  };
+}
+
+export function buildProblemFraming(
+  datasetProfile: DatasetProfile,
+  leaderboard: LeaderboardEntry[],
+  targetCardinality?: number,
+): ProblemFraming {
+  const taskSubtype = resolveTaskSubtype(datasetProfile.problemType, targetCardinality);
+  const primaryMetric = leaderboard[0]?.metricName ?? defaultMetric(datasetProfile.problemType);
+
+  return {
+    targetName: datasetProfile.targetColumn,
+    taskSubtype,
+    primaryMetric,
+    rationale:
+      datasetProfile.problemType === "regression"
+        ? `${humanizeTaskSubtype(taskSubtype)} was selected because the target behaves like a continuous value, so fit quality and residual stability matter most.`
+        : `${humanizeTaskSubtype(taskSubtype)} was selected because the target behaves like a labeled outcome, so held-out classification quality is the main decision signal.`,
+  };
+}
+
+export function buildPlainEnglishSummary(
+  datasetProfile: DatasetProfile,
+  leaderboard: LeaderboardEntry[],
+  criticReport: CriticReport,
+  targetCardinality?: number,
+): PlainEnglishSummary {
+  const bestModel = buildBestModelSummary(datasetProfile, leaderboard);
+  const framing = buildProblemFraming(datasetProfile, leaderboard, targetCardinality);
+  const caution =
+    criticReport.warnings[0] ??
+    criticReport.limitations[0] ??
+    "This is still an MVP-quality experiment and should be validated further before production use.";
+
+  return {
+    headline: `${bestModel.modelName} is the strongest model for predicting ${datasetProfile.targetColumn} on this dataset.`,
+    shortExplanation: `ML-Labs treated this as ${humanizeTaskSubtype(framing.taskSubtype)} and ranked models by ${framing.primaryMetric}. The winning model improved on the baseline by ${bestModel.absoluteImprovement.toFixed(3)} points.`,
+    takeaways: [
+      `${datasetProfile.rows.toLocaleString()} rows and ${datasetProfile.columns} columns were profiled before training.`,
+      `${bestModel.modelName} finished first with ${bestModel.metricName} ${bestModel.score.toFixed(3)}.`,
+      `The lab found ${datasetProfile.numericColumns.length} numeric and ${datasetProfile.categoricalColumns.length} categorical feature families.`,
+      caution,
+    ],
   };
 }
 
@@ -194,6 +268,29 @@ function buildWhyItWon(
       : `It raised classification performance above the baseline by ${round(winner.score - baseline.score).toFixed(3)}.`;
 
   return `${metricContext} ${generalizationText}`;
+}
+
+function resolveTaskSubtype(
+  problemType: ProblemType,
+  targetCardinality?: number,
+): ProblemTaskSubtype {
+  if (problemType === "regression") {
+    return "regression";
+  }
+
+  if (typeof targetCardinality === "number" && targetCardinality > 2) {
+    return "multiclass_classification";
+  }
+
+  return "binary_classification";
+}
+
+function defaultMetric(problemType: ProblemType): string {
+  return problemType === "regression" ? "R2" : "Accuracy";
+}
+
+function humanizeTaskSubtype(taskSubtype: ProblemTaskSubtype): string {
+  return taskSubtype.replaceAll("_", " ");
 }
 
 function buildTrainArtifact(datasetProfile: DatasetProfile, bestModel: BestModelSummary): string {

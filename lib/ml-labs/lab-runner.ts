@@ -12,6 +12,14 @@ import {
   RuntimeBundleExpiredError,
   RuntimeBundleMissingError,
 } from "@/lib/ml-labs/runtime-store";
+import {
+  createSourceBundle,
+  resolveSourceBundle,
+  saveSourceBundle,
+  SourceBundleExpiredError,
+  SourceBundleMissingError,
+  sourceBundleHasRunnableCsv,
+} from "@/lib/ml-labs/source-store";
 import type {
   AgentTraceItem,
   CriticReport,
@@ -20,7 +28,9 @@ import type {
   LabRunResult,
   LeaderboardEntry,
   ProblemType,
+  PythonInspectResult,
   PythonRunnerResult,
+  SourceResolveResult,
   Visualization,
 } from "@/lib/ml-labs/types";
 
@@ -38,6 +48,7 @@ export async function runLab({
   kaggleDataset,
   kaggleFilePath,
   kaggleUrl,
+  sourceToken,
   targetColumn,
   intentPrompt,
 }: {
@@ -45,6 +56,7 @@ export async function runLab({
   kaggleDataset?: string;
   kaggleFilePath?: string;
   kaggleUrl?: string;
+  sourceToken?: string;
   targetColumn: string;
   intentPrompt?: string;
 }): Promise<LabRunResult> {
@@ -52,8 +64,8 @@ export async function runLab({
     throw new Error("A target column is required.");
   }
 
-  if (!file && !kaggleDataset && !kaggleUrl) {
-    throw new Error("Provide either a CSV file upload or a Kaggle dataset URL/slug.");
+  if (!file && !kaggleDataset && !kaggleUrl && !sourceToken) {
+    throw new Error("Provide a source token, CSV file upload, or a Kaggle dataset URL/slug.");
   }
 
   if (file && !file.name.toLowerCase().endsWith(".csv")) {
@@ -61,6 +73,10 @@ export async function runLab({
   }
 
   const runId = buildRunId(targetColumn);
+  const resolvedSource = sourceToken ? await resolveSourceBundle(sourceToken) : null;
+  if (resolvedSource && !sourceBundleHasRunnableCsv(resolvedSource)) {
+    throw new Error("Choose a Kaggle CSV table before starting the run.");
+  }
   const tempDir = file ? await fs.mkdtemp(path.join(os.tmpdir(), "ml-labs-")) : null;
   const tempFilePath = file && tempDir ? path.join(tempDir, sanitizeFilename(file.name)) : null;
   const bundleDir = await prepareRuntimeBundle(runId);
@@ -73,7 +89,7 @@ export async function runLab({
 
     const runnerResult = await executePythonTrain({
       bundleDir,
-      csvPath: tempFilePath ?? undefined,
+      csvPath: resolvedSource?.csvPath ?? tempFilePath ?? undefined,
       intentPrompt,
       kaggleDataset,
       kaggleFilePath,
@@ -87,6 +103,7 @@ export async function runLab({
       scenario: runnerResult.datasetProfile.problemType,
       intentPrompt,
       sourceDescription:
+        resolvedSource?.sourceLabel ??
         runnerResult.metadata?.sourceLabel ??
         describeSource({
           file,
@@ -116,11 +133,54 @@ export async function predictLabRun({
   return executePythonPredict({ bundleDir, input, runId });
 }
 
+export async function resolveLabSource({
+  file,
+  kaggleInput,
+  selectedFilePath,
+}: {
+  file?: File;
+  kaggleInput?: string;
+  selectedFilePath?: string;
+}): Promise<SourceResolveResult> {
+  if (!file && !kaggleInput?.trim()) {
+    throw new Error("Provide either a CSV file upload or a Kaggle reference to resolve.");
+  }
+
+  if (file && !file.name.toLowerCase().endsWith(".csv")) {
+    throw new Error("Only CSV uploads are supported in this MVP.");
+  }
+
+  const { sourceToken, sourceDir } = await createSourceBundle();
+  const sourceFilePath = file ? path.join(sourceDir, sanitizeFilename(file.name)) : undefined;
+
+  try {
+    if (file && sourceFilePath) {
+      const fileBuffer = Buffer.from(await file.arrayBuffer());
+      await fs.writeFile(sourceFilePath, fileBuffer);
+    }
+
+    const inspectResult = await executePythonInspect({
+      csvPath: sourceFilePath,
+      kaggleInput,
+      selectedFilePath,
+    });
+
+    return saveSourceBundle(sourceToken, inspectResult);
+  } catch (error) {
+    await fs.rm(sourceDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 export function buildLabRunFromRunnerResult(
   runnerResult: PythonRunnerResult,
   options: BuildRunOptions,
 ): LabRunResult {
   const leaderboard = normalizeLeaderboard(runnerResult.leaderboard);
+  const visualizations = ensureProfileVisualizations(
+    runnerResult.datasetProfile,
+    normalizeVisualizations(runnerResult.visualizations),
+  );
   const agentTrace = buildAgentTrace(
     runnerResult.datasetProfile,
     leaderboard,
@@ -138,15 +198,21 @@ export function buildLabRunFromRunnerResult(
       leaderboard,
       criticReport: runnerResult.criticReport,
       predictionInputSchema: runnerResult.predictionInputSchema,
+      targetCardinality: runnerResult.metadata?.targetCardinality,
     },
     {
       agentTrace,
-      visualizations: normalizeVisualizations(runnerResult.visualizations),
+      visualizations,
     },
   );
 }
 
-export { RuntimeBundleExpiredError, RuntimeBundleMissingError };
+export {
+  RuntimeBundleExpiredError,
+  RuntimeBundleMissingError,
+  SourceBundleExpiredError,
+  SourceBundleMissingError,
+};
 
 async function executePythonTrain({
   bundleDir,
@@ -190,6 +256,32 @@ async function executePythonTrain({
   }
 
   return executePythonCommand<PythonRunnerResult>(args);
+}
+
+async function executePythonInspect({
+  csvPath,
+  kaggleInput,
+  selectedFilePath,
+}: {
+  csvPath?: string;
+  kaggleInput?: string;
+  selectedFilePath?: string;
+}): Promise<PythonInspectResult> {
+  const args = ["inspect"];
+
+  if (csvPath) {
+    args.push("--csv", csvPath);
+  }
+
+  if (kaggleInput) {
+    args.push("--kaggle-input", kaggleInput);
+  }
+
+  if (selectedFilePath) {
+    args.push("--selected-file-path", selectedFilePath);
+  }
+
+  return executePythonCommand<PythonInspectResult>(args);
 }
 
 async function executePythonPredict({
@@ -267,25 +359,25 @@ function buildAgentTrace(
   const trace: AgentTraceItem[] = [
     {
       agent: "Data Intake Agent",
-      stageId: "intake",
+      stageId: "source-intake",
       status: "complete",
       message: `Ingested ${datasetProfile.rows} rows across ${datasetProfile.columns} columns from ${sourceDescription}.`,
     },
     {
-      agent: "Schema Validation Agent",
-      stageId: "schema-validation",
+      agent: "Source Resolution Agent",
+      stageId: "source-resolution",
       status: "complete",
-      message: `Validated target column "${datasetProfile.targetColumn}" and inferred ${datasetProfile.problemType} behavior.`,
+      message: `Resolved the dataset source and validated the working table before training on target "${datasetProfile.targetColumn}".`,
     },
     {
       agent: "Data Profiling Agent",
-      stageId: "profiling",
+      stageId: "schema-profiling",
       status: "complete",
       message: `Separated ${datasetProfile.numericColumns.length} numeric and ${datasetProfile.categoricalColumns.length} categorical features.`,
     },
     {
       agent: "Problem Framing Agent",
-      stageId: "framing",
+      stageId: "target-framing",
       status: "complete",
       message: `Selected ${metricDescription(datasetProfile.problemType)} as the primary evaluation frame for the lab run.`,
     },
@@ -341,7 +433,7 @@ function buildAgentTrace(
     },
     {
       agent: "Report Agent",
-      stageId: "packaging",
+      stageId: "export",
       status: "complete",
       message: "Generated report markdown plus runnable code artifacts for export.",
     },
@@ -354,8 +446,50 @@ function normalizeVisualizations(visualizations: Visualization[]): Visualization
   return visualizations.map((visualization, index) => ({
     ...visualization,
     id: visualization.id || `viz-${index + 1}`,
+    stageId: normalizeVisualizationStageId(visualization.stageId),
     data: visualization.data,
   }));
+}
+
+function ensureProfileVisualizations(
+  datasetProfile: DatasetProfile,
+  visualizations: Visualization[],
+): Visualization[] {
+  const hasFeatureBreakdown = visualizations.some(
+    (visualization) => visualization.type === "feature_type_breakdown",
+  );
+
+  if (hasFeatureBreakdown) {
+    return visualizations;
+  }
+
+  return [
+    {
+      id: "feature-type-breakdown",
+      stageId: "schema-profiling",
+      type: "feature_type_breakdown",
+      title: "Feature family breakdown",
+      data: [
+        {
+          label: "numeric",
+          count: datasetProfile.numericColumns.length,
+          ratio:
+            datasetProfile.columns > 1
+              ? datasetProfile.numericColumns.length / (datasetProfile.columns - 1)
+              : 0,
+        },
+        {
+          label: "categorical",
+          count: datasetProfile.categoricalColumns.length,
+          ratio:
+            datasetProfile.columns > 1
+              ? datasetProfile.categoricalColumns.length / (datasetProfile.columns - 1)
+              : 0,
+        },
+      ],
+    },
+    ...visualizations,
+  ];
 }
 
 function preferredPythonBinary(projectRoot: string): string {
@@ -406,7 +540,7 @@ function familyToStageId(family: string): string {
   }
 
   if (normalized.includes("boost")) {
-    return "boosted-trees";
+    return "boosted-model";
   }
 
   if (normalized.includes("tree") || normalized.includes("forest")) {
@@ -442,4 +576,20 @@ function extractPythonFailure(stderr: string): string {
   }
 
   return lines[lines.length - 1] ?? normalized;
+}
+
+function normalizeVisualizationStageId(stageId?: string): string | undefined {
+  if (!stageId) {
+    return undefined;
+  }
+
+  const mapping: Record<string, string> = {
+    profiling: "schema-profiling",
+    framing: "target-framing",
+    evaluation: "evaluation",
+    packaging: "export",
+    "schema-validation": "source-resolution",
+  };
+
+  return mapping[stageId] ?? stageId;
 }
