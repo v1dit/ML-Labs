@@ -214,7 +214,8 @@ export function MlWorkbench() {
 
       const payload = (await response.json()) as LabRunResult | LabRunError;
       if (!response.ok) {
-        throw new Error(payload.details ?? payload.error ?? "Dataset run failed.");
+        const errorPayload = payload as LabRunError;
+        throw new Error(errorPayload.details ?? errorPayload.error ?? "Dataset run failed.");
       }
 
       const labRunResult = payload as LabRunResult;
