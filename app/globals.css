@@ -2,14 +2,15 @@
   color-scheme: dark;
   --black: #000;
   --bg: #070707;
-  --pane: #111;
-  --pane-raised: #181818;
-  --pane-soft: #1f1f1f;
+  --pane: #101010;
+  --pane-raised: #171717;
+  --pane-soft: #202020;
   --line: #2a2a2a;
   --line-strong: #3a3a3a;
   --text: #e8e8e8;
-  --muted: #9a9a9a;
-  --dim: #666;
+  --muted: #a0a0a0;
+  --dim: #696969;
+  --font-ui: Inter, "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 
 * {
@@ -22,8 +23,7 @@ body {
   min-height: 100%;
   background: var(--black);
   color: var(--text);
-  font-family:
-    "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-family: var(--font-ui);
 }
 
 body {
@@ -32,7 +32,10 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+pre,
+code,
+table {
   font: inherit;
 }
 
@@ -51,7 +54,7 @@ img {
 
 .ide-shell {
   display: grid;
-  grid-template-columns: minmax(340px, 32vw) minmax(0, 1fr);
+  grid-template-columns: minmax(340px, 31vw) minmax(0, 1fr);
   gap: 8px;
   min-height: 100vh;
   padding: 42px 8px 8px;
@@ -75,11 +78,10 @@ img {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
   min-width: 0;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .brand-left img {
@@ -122,14 +124,14 @@ img {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   background:
-    radial-gradient(circle, rgba(255, 255, 255, 0.13) 0 1px, transparent 1.4px)
+    radial-gradient(circle, rgba(255, 255, 255, 0.11) 0 1px, transparent 1.35px)
       10px 10px / 18px 18px,
     var(--black);
 }
 
 .workbench-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .pane-toolbar {
@@ -151,14 +153,13 @@ img {
   min-width: 0;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
   line-height: 1;
 }
 
 .toolbar-status {
   flex: 0 0 auto;
   color: var(--dim);
-  font-family: "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, ui-monospace, monospace;
 }
 
 .message-list {
@@ -175,7 +176,7 @@ img {
   max-width: 96%;
   padding: 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 9px;
   background: rgba(25, 25, 25, 0.96);
 }
 
@@ -197,7 +198,13 @@ img {
 }
 
 .message p {
-  font-family: "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, ui-monospace, monospace;
+  font-size: 12.5px;
+}
+
+.error-banner,
+.run-error,
+.empty-run {
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -208,7 +215,6 @@ img {
   border-radius: 8px;
   background: var(--pane-soft);
   color: var(--text);
-  font-size: 12px;
 }
 
 .composer {
@@ -231,8 +237,7 @@ img {
   padding: 9px 10px;
   background: #1b1b1b;
   color: var(--text);
-  font-family: "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, ui-monospace, monospace;
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.4;
 }
 
@@ -259,27 +264,95 @@ img {
   min-height: 52px;
 }
 
-.workbench-grid {
-  display: grid;
-  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
-  gap: 1px;
-  min-height: 0;
-  background: var(--line);
-}
-
-.ingest-form,
-.stream-panel {
+.panel-stack {
+  position: relative;
   min-width: 0;
   min-height: 0;
-  background: var(--pane);
+  overflow: hidden;
+  background: var(--black);
 }
 
-.ingest-form {
+.stage-panel {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  padding: 10px;
+  background: var(--pane);
+  opacity: 0;
+  transform: translateY(104%);
+  transition:
+    transform 520ms cubic-bezier(0.2, 0.82, 0.2, 1),
+    opacity 260ms ease;
+  pointer-events: none;
+}
+
+.stage-panel.active {
+  z-index: 3;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.stage-panel.past {
+  z-index: 1;
+  opacity: 0.18;
+  transform: translateY(-102%);
+}
+
+.stage-panel.future {
+  z-index: 2;
+  opacity: 0;
+  transform: translateY(102%);
+}
+
+.stage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0b0b0b;
+}
+
+.stage-head span,
+.stage-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-head strong {
+  color: var(--text);
+}
+
+.source-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.9fr) minmax(260px, 1.1fr);
+  gap: 10px;
+  min-height: 0;
+}
+
+.source-card {
   display: grid;
   align-content: start;
   gap: 10px;
+  min-width: 0;
+  min-height: 0;
   padding: 10px;
-  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #0c0c0c;
 }
 
 .file-input {
@@ -297,13 +370,14 @@ img {
   justify-content: flex-start;
   gap: 8px;
   width: 100%;
-  min-height: 38px;
+  min-height: 42px;
   padding: 0 10px;
   border-style: dashed;
   text-align: left;
 }
 
-.dropzone span {
+.dropzone span,
+.file-summary span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -318,7 +392,7 @@ img {
 .field span {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .field input,
@@ -329,8 +403,7 @@ img {
   outline: none;
   background: #090909;
   color: var(--text);
-  font-family: "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, ui-monospace, monospace;
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
 .field input {
@@ -359,20 +432,13 @@ img {
   font-size: 12px;
 }
 
-.file-summary span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .file-summary small {
   color: var(--dim);
 }
 
 .dataset-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1.15fr;
   gap: 8px;
 }
 
@@ -382,11 +448,10 @@ img {
   min-height: 34px;
   padding: 0 10px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .primary-action {
-  grid-column: 1 / -1;
   background: #2b2b2b;
 }
 
@@ -396,8 +461,7 @@ img {
 }
 
 .stream-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
 .stream-status {
@@ -406,10 +470,10 @@ img {
   justify-content: space-between;
   height: 34px;
   padding: 0 10px;
-  border-bottom: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: #0b0b0b;
   color: var(--muted);
-  font-family: "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, ui-monospace, monospace;
   font-size: 12px;
 }
 
@@ -426,8 +490,10 @@ img {
   min-height: 0;
   padding: 10px;
   overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 9px;
   background:
-    radial-gradient(circle, rgba(255, 255, 255, 0.09) 0 1px, transparent 1.4px)
+    radial-gradient(circle, rgba(255, 255, 255, 0.08) 0 1px, transparent 1.35px)
       4px 4px / 20px 20px,
     #050505;
 }
@@ -435,33 +501,37 @@ img {
 .stream-panel code {
   display: block;
   color: #d8d8d8;
-  font-family: "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, ui-monospace, monospace;
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
+  animation: lineIn 240ms ease both;
 }
 
-.run-output {
+.stream-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 8px;
+}
+
+.profile-panel {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.profile-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  min-height: 82px;
-  border-top: 1px solid var(--line);
-  background: var(--line);
-}
-
-.metric,
-.run-error,
-.empty-run {
-  min-width: 0;
-  background: #0b0b0b;
+  gap: 8px;
 }
 
 .metric {
   display: grid;
   gap: 5px;
-  align-content: center;
+  min-width: 0;
   padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0b0b0b;
+  animation: blockIn 360ms ease both;
 }
 
 .metric small {
@@ -474,22 +544,76 @@ img {
   min-width: 0;
   overflow: hidden;
   color: var(--text);
-  font-family: "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, ui-monospace, monospace;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.feature-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.feature-row span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--pane-raised);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.preview-table-wrap {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #080808;
+}
+
+.preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.preview-table th,
+.preview-table td {
+  overflow: hidden;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #111;
+  color: var(--text);
+  font-weight: 650;
+}
+
 .run-error,
 .empty-run {
-  grid-column: 1 / -1;
   display: grid;
   align-content: center;
+  min-height: 42px;
   padding: 0 12px;
-  color: var(--muted);
-  font-family: "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, ui-monospace, monospace;
-  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0b0b0b;
 }
 
 .spin {
@@ -513,6 +637,30 @@ img {
   }
 }
 
+@keyframes lineIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes blockIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 960px) {
   .ide-shell {
     grid-template-columns: 1fr;
@@ -525,15 +673,22 @@ img {
     height: auto;
     min-height: 0;
   }
+
+  .panel-stack {
+    min-height: 520px;
+  }
+
+  .source-grid,
+  .profile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 680px) {
-  .workbench-grid {
+  .source-grid,
+  .profile-grid,
+  .dataset-actions {
     grid-template-columns: 1fr;
-  }
-
-  .run-output {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .brand-right img {

@@ -22,7 +22,8 @@ import {
 } from "react";
 
 type Role = "user" | "assistant" | "system";
-type UploadStatus = "idle" | "reading" | "running" | "complete" | "failed";
+type UploadStatus = "idle" | "searching" | "reading" | "running" | "complete" | "failed";
+type IngestionPanel = "source" | "stream" | "profile";
 
 type ChatMessage = {
   id: string;
@@ -84,6 +85,13 @@ type NormalizedRun = {
   trace: AgentTraceItem[];
 };
 
+type DatasetPreview = {
+  headers: string[];
+  rows: string[][];
+  rowCount: number;
+  columnCount: number;
+};
+
 const starterMessages: ChatMessage[] = [
   {
     id: "system-ready",
@@ -104,6 +112,8 @@ const pendingStages = [
   "profiling schema ...",
   "replaying LabRunResult ...",
 ];
+
+const panelOrder: IngestionPanel[] = ["source", "stream", "profile"];
 
 const labRunContractLines = [
   "{",
@@ -133,6 +143,8 @@ export default function HomePage() {
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>("idle");
   const [uploadResult, setUploadResult] = useState<NormalizedRun | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [activePanel, setActivePanel] = useState<IngestionPanel>("source");
+  const [datasetPreview, setDatasetPreview] = useState<DatasetPreview | null>(null);
   const [streamLines, setStreamLines] = useState<string[]>([
     "$ waiting for dataset",
     "source: csv upload | kaggle connector pending",
@@ -151,12 +163,27 @@ export default function HomePage() {
     [messages],
   );
   const canRunDataset = Boolean(selectedFile && targetColumn.trim() && uploadStatus !== "running");
+  const panelIndex = panelOrder.indexOf(activePanel);
+  const profileRows = uploadResult?.rows ?? datasetPreview?.rowCount ?? null;
+  const profileColumns = uploadResult?.columns ?? datasetPreview?.columnCount ?? null;
+  const featureFamilies = useMemo(
+    () => inferFeatureFamilies(datasetPreview, targetColumn),
+    [datasetPreview, targetColumn],
+  );
   const activeStageLabel =
     uploadStatus === "running"
       ? pendingStages[activeStageIndex]
+      : uploadStatus === "searching"
+        ? "searching ..."
       : uploadStatus === "reading"
-        ? "streaming csv"
-        : uploadStatus;
+        ? "ingesting ..."
+        : uploadStatus === "complete"
+          ? "profile ready"
+          : uploadStatus === "failed"
+            ? "blocked"
+            : selectedFile
+              ? "ready"
+              : "idle";
 
   async function sendMessage(content: string) {
     const trimmed = content.trim();
@@ -207,7 +234,10 @@ export default function HomePage() {
 
   async function runDataset(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await submitDatasetRun();
+  }
 
+  async function submitDatasetRun() {
     if (!selectedFile && kaggleSlug.trim()) {
       showKagglePending();
       return;
@@ -228,6 +258,8 @@ export default function HomePage() {
     setUploadStatus("running");
     setUploadError(null);
     setUploadResult(null);
+    setActivePanel("stream");
+    clearStreamTimer();
     startStageLoop();
     startSchemaReplay();
     appendAssistantMessage(`Data Intake Agent: ingesting ${selectedFile.name}`);
@@ -253,11 +285,13 @@ export default function HomePage() {
         ...current.slice(-28),
         ...createResultSchemaLines(normalized),
       ]);
+      window.setTimeout(() => setActivePanel("profile"), 650);
     } catch (caughtError) {
       const message =
         caughtError instanceof Error ? caughtError.message : "Unknown dataset error.";
       setUploadError(message);
       setUploadStatus("failed");
+      setActivePanel("stream");
       stopStageLoop();
       stopSchemaReplay();
       appendAssistantMessage(`Run blocked: ${message}`);
@@ -283,12 +317,15 @@ export default function HomePage() {
   async function acceptFile(file: File | null) {
     clearStreamTimer();
     stopSchemaReplay();
+    stopStageLoop();
     setSelectedFile(file);
     setUploadResult(null);
     setUploadError(null);
+    setActivePanel("source");
 
     if (!file) {
       setUploadStatus("idle");
+      setDatasetPreview(null);
       setStreamLines(["$ waiting for dataset", "source: csv upload | kaggle connector pending"]);
       return;
     }
@@ -296,22 +333,42 @@ export default function HomePage() {
     setUploadStatus("reading");
     appendAssistantMessage(`Dataset staged: ${file.name}`);
 
-    const preview = await file.text();
-    const rows = preview
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .slice(0, 30)
-      .map((line, index) => `${String(index).padStart(3, "0")}  ${line}`);
+    try {
+      const preview = await file.text();
+      const parsedPreview = createDatasetPreview(preview);
+      setDatasetPreview(parsedPreview);
 
-    animateStream([
-      `$ open ${file.name}`,
-      `bytes: ${file.size}`,
-      "preview:",
-      ...rows,
-      "$ inferred input contract",
-      ...labRunContractLines,
-      "$ ready for target column",
-    ]);
+      ["reading headers", "inferring target candidate", "profiling schema"].forEach(
+        (message, index) => {
+          window.setTimeout(() => {
+            appendAssistantMessage(`Data Intake Agent: ${message}`);
+          }, 240 + index * 430);
+        },
+      );
+
+      window.setTimeout(() => setActivePanel("stream"), 420);
+      animateStream([
+        `$ open ${file.name}`,
+        `bytes: ${file.size}`,
+        `headers: ${parsedPreview.headers.join(", ") || "unknown"}`,
+        `shape estimate: ${parsedPreview.rowCount} rows x ${parsedPreview.columnCount} columns`,
+        "preview:",
+        ...preview
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .slice(0, 30)
+          .map((line, index) => `${String(index).padStart(3, "0")}  ${line}`),
+        "$ inferred input contract",
+        ...labRunContractLines,
+        "$ ready for target column",
+      ]);
+    } catch (caughtError) {
+      const message =
+        caughtError instanceof Error ? caughtError.message : "Could not read CSV preview.";
+      setUploadStatus("failed");
+      setUploadError(message);
+      appendAssistantMessage(`Dataset read blocked: ${message}`);
+    }
   }
 
   async function loadDemoCsv() {
@@ -328,6 +385,13 @@ export default function HomePage() {
   function showKagglePending() {
     const slug = kaggleSlug.trim();
 
+    clearStreamTimer();
+    stopSchemaReplay();
+    stopStageLoop();
+    setActivePanel("source");
+    setUploadStatus("searching");
+    setUploadResult(null);
+    setUploadError(null);
     appendAssistantMessage(
       slug
         ? `Kaggle connector pending for ${slug}. CSV upload is the active ingestion path in this frontend pass.`
@@ -336,6 +400,7 @@ export default function HomePage() {
     setStreamLines((current) => [
       ...current.slice(-24),
       `$ kaggle pull ${slug || "owner/dataset"}`,
+      "searching ...",
       "connector: pending backend credentials",
       "status: waiting for csv fallback",
     ]);
@@ -382,7 +447,7 @@ export default function HomePage() {
     streamTimerRef.current = window.setInterval(() => {
       if (index >= lines.length) {
         clearStreamTimer();
-        setUploadStatus("idle");
+        setUploadStatus((current) => (current === "reading" ? "idle" : current));
         return;
       }
 
@@ -391,7 +456,7 @@ export default function HomePage() {
 
       if (index >= lines.length) {
         clearStreamTimer();
-        setUploadStatus("idle");
+        setUploadStatus((current) => (current === "reading" ? "idle" : current));
       }
     }, 55);
   }
@@ -521,73 +586,87 @@ export default function HomePage() {
             <Database size={14} />
             dataset ingestion
           </span>
-          <span className="toolbar-status">{uploadStatus}</span>
+          <span className="toolbar-status">{activeStageLabel}</span>
         </div>
 
-        <div className="workbench-grid">
-          <form className="ingest-form" onSubmit={runDataset}>
-            <input
-              ref={fileInputRef}
-              className="file-input"
-              type="file"
-              accept=".csv,text/csv"
-              onChange={handleFileChange}
-              aria-hidden="true"
-              hidden
-              tabIndex={-1}
-            />
+        <div className="panel-stack" aria-live="polite">
+          <form
+            className={`stage-panel source-panel ${getPanelClass("source", panelIndex)}`}
+            onSubmit={runDataset}
+          >
+            <div className="stage-head">
+              <span>01 source</span>
+              <strong>{activePanel === "source" ? activeStageLabel : "configured"}</strong>
+            </div>
 
-            <button
-              className="dropzone"
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={handleDrop}
-            >
-              <Upload size={16} />
-              <span>{selectedFile ? selectedFile.name : "select or drop csv"}</span>
-            </button>
+            <div className="source-grid">
+              <div className="source-card">
+                <input
+                  ref={fileInputRef}
+                  className="file-input"
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={handleFileChange}
+                  aria-hidden="true"
+                  hidden
+                  tabIndex={-1}
+                />
 
-            <button className="secondary-action full-action" type="button" onClick={loadDemoCsv}>
-              <CirclePlay size={14} />
-              load demo csv
-            </button>
+                <button
+                  className="dropzone"
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={handleDrop}
+                >
+                  <Upload size={16} />
+                  <span>{selectedFile ? selectedFile.name : "select or drop csv"}</span>
+                </button>
 
-            <label className="field">
-              <span>kaggle slug</span>
-              <input
-                value={kaggleSlug}
-                onChange={(event) => setKaggleSlug(event.target.value)}
-                placeholder="owner/dataset"
-              />
-            </label>
+                <button className="secondary-action full-action" type="button" onClick={loadDemoCsv}>
+                  <CirclePlay size={14} />
+                  load demo csv
+                </button>
 
-            <label className="field">
-              <span>target column</span>
-              <input
-                value={targetColumn}
-                onChange={(event) => setTargetColumn(event.target.value)}
-                placeholder="charges"
-              />
-            </label>
-
-            <label className="field intent-field">
-              <span>intent prompt</span>
-              <textarea
-                value={intentPrompt}
-                onChange={(event) => setIntentPrompt(event.target.value)}
-                placeholder="Create a model to predict the target column."
-                rows={3}
-              />
-            </label>
-
-            {selectedFile ? (
-              <div className="file-summary">
-                <FileText size={14} />
-                <span>{selectedFile.name}</span>
-                <small>{formatFileSize(selectedFile.size)}</small>
+                {selectedFile ? (
+                  <div className="file-summary">
+                    <FileText size={14} />
+                    <span>{selectedFile.name}</span>
+                    <small>{formatFileSize(selectedFile.size)}</small>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+
+              <div className="source-card">
+                <label className="field">
+                  <span>kaggle slug</span>
+                  <input
+                    value={kaggleSlug}
+                    onChange={(event) => setKaggleSlug(event.target.value)}
+                    placeholder="owner/dataset"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>target column</span>
+                  <input
+                    value={targetColumn}
+                    onChange={(event) => setTargetColumn(event.target.value)}
+                    placeholder="charges"
+                  />
+                </label>
+
+                <label className="field intent-field">
+                  <span>intent prompt</span>
+                  <textarea
+                    value={intentPrompt}
+                    onChange={(event) => setIntentPrompt(event.target.value)}
+                    placeholder="Create a model to predict the target column."
+                    rows={3}
+                  />
+                </label>
+              </div>
+            </div>
 
             <div className="dataset-actions">
               <button className="secondary-action" type="button" onClick={showKagglePending}>
@@ -605,8 +684,12 @@ export default function HomePage() {
             </div>
           </form>
 
-          <div className="stream-panel">
-          <div className="stream-status">
+          <section className={`stage-panel stream-panel ${getPanelClass("stream", panelIndex)}`}>
+            <div className="stage-head">
+              <span>02 ingestion stream</span>
+              <strong>{activePanel === "stream" ? activeStageLabel : "standing by"}</strong>
+            </div>
+            <div className="stream-status">
               <span>{activeStageLabel}</span>
               <i />
             </div>
@@ -615,33 +698,78 @@ export default function HomePage() {
                 <code key={`${line}-${index}`}>{line}</code>
               ))}
             </pre>
-          </div>
-        </div>
+            <div className="stream-actions">
+              <button className="secondary-action" type="button" onClick={() => setActivePanel("source")}>
+                edit source
+              </button>
+              <button
+                aria-label="run streamed dataset"
+                className="primary-action"
+                type="button"
+                disabled={!canRunDataset}
+                onClick={submitDatasetRun}
+              >
+                {uploadStatus === "running" ? <Loader2 className="spin" size={14} /> : <Terminal size={14} />}
+                run dataset
+              </button>
+            </div>
+          </section>
 
-        <div className="run-output" aria-live="polite">
-          {uploadResult ? (
-            <>
-              <Metric label="run" value={uploadResult.runId} />
-              <Metric label="task" value={uploadResult.problemType} />
+          <section className={`stage-panel profile-panel ${getPanelClass("profile", panelIndex)}`}>
+            <div className="stage-head">
+              <span>03 dataset profile</span>
+              <strong>{uploadStatus === "complete" ? "complete" : "awaiting backend"}</strong>
+            </div>
+
+            {uploadStatus === "failed" && uploadError ? (
+              <p className="run-error">{uploadError}</p>
+            ) : null}
+
+            <div className="profile-grid">
+              <Metric label="run" value={uploadResult?.runId ?? "pending"} />
+              <Metric label="task" value={uploadResult?.problemType ?? "pending"} />
               <Metric
                 label="shape"
-                value={`${uploadResult.rows ?? "?"} x ${uploadResult.columns ?? "?"}`}
+                value={`${profileRows ?? "?"} x ${profileColumns ?? "?"}`}
               />
-              <Metric label="target" value={uploadResult.targetColumn} />
-              <Metric label="best" value={uploadResult.bestModel} />
-              <Metric label="visuals" value={String(uploadResult.visualizations)} />
-              <Metric label="artifacts" value={String(uploadResult.artifacts)} />
-              <Metric label="schema" value={String(uploadResult.schemaFields)} />
-            </>
-          ) : null}
+              <Metric label="target" value={(uploadResult?.targetColumn ?? targetColumn) || "unset"} />
+              <Metric label="best" value={uploadResult?.bestModel ?? "pending"} />
+              <Metric label="visuals" value={String(uploadResult?.visualizations ?? 0)} />
+              <Metric label="artifacts" value={String(uploadResult?.artifacts ?? 0)} />
+              <Metric label="schema" value={String(uploadResult?.schemaFields ?? 0)} />
+            </div>
 
-          {uploadStatus === "failed" && uploadError ? (
-            <p className="run-error">{uploadError}</p>
-          ) : null}
+            <div className="feature-row">
+              {featureFamilies.map((family) => (
+                <span key={family}>{family}</span>
+              ))}
+            </div>
 
-          {!uploadResult && uploadStatus !== "failed" ? (
-            <p className="empty-run">awaiting csv stream or kaggle connector</p>
-          ) : null}
+            <div className="preview-table-wrap">
+              {datasetPreview ? (
+                <table className="preview-table">
+                  <thead>
+                    <tr>
+                      {datasetPreview.headers.slice(0, 6).map((header) => (
+                        <th key={header}>{header}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {datasetPreview.rows.slice(0, 6).map((row, rowIndex) => (
+                      <tr key={`${row.join("-")}-${rowIndex}`}>
+                        {datasetPreview.headers.slice(0, 6).map((header, columnIndex) => (
+                          <td key={`${header}-${columnIndex}`}>{row[columnIndex] ?? ""}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="empty-run">awaiting csv stream or kaggle connector</p>
+              )}
+            </div>
+          </section>
         </div>
       </section>
     </main>
@@ -655,6 +783,78 @@ function Metric({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </span>
   );
+}
+
+function getPanelClass(panel: IngestionPanel, activeIndex: number) {
+  const index = panelOrder.indexOf(panel);
+
+  if (index === activeIndex) {
+    return "active";
+  }
+
+  return index < activeIndex ? "past" : "future";
+}
+
+function createDatasetPreview(csv: string): DatasetPreview {
+  const rawRows = csv.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const headers = parseCsvLine(rawRows[0] ?? "").map((value) => value.trim());
+  const rows = rawRows.slice(1, 12).map((line) => parseCsvLine(line).map((value) => value.trim()));
+
+  return {
+    headers,
+    rows,
+    rowCount: Math.max(rawRows.length - 1, 0),
+    columnCount: headers.length,
+  };
+}
+
+function parseCsvLine(line: string) {
+  const values: string[] = [];
+  let current = "";
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    const nextCharacter = line[index + 1];
+
+    if (character === '"' && nextCharacter === '"') {
+      current += '"';
+      index += 1;
+    } else if (character === '"') {
+      quoted = !quoted;
+    } else if (character === "," && !quoted) {
+      values.push(current);
+      current = "";
+    } else {
+      current += character;
+    }
+  }
+
+  values.push(current);
+  return values;
+}
+
+function inferFeatureFamilies(preview: DatasetPreview | null, targetColumn: string) {
+  if (!preview || preview.headers.length === 0) {
+    return ["schema pending", "target pending", "model pending"];
+  }
+
+  const target = targetColumn.trim().toLowerCase();
+  const featureHeaders = preview.headers.filter((header) => header.toLowerCase() !== target);
+  const numericCount = featureHeaders.filter((header) => {
+    const columnIndex = preview.headers.indexOf(header);
+    return preview.rows
+      .slice(0, 8)
+      .filter((row) => row[columnIndex])
+      .every((row) => !Number.isNaN(Number(row[columnIndex])));
+  }).length;
+  const categoricalCount = Math.max(featureHeaders.length - numericCount, 0);
+
+  return [
+    `${numericCount} numeric features`,
+    `${categoricalCount} categorical features`,
+    targetColumn.trim() ? `target: ${targetColumn.trim()}` : "target pending",
+  ];
 }
 
 function createResultSchemaLines(result: NormalizedRun) {
