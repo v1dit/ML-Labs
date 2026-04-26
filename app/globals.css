@@ -1,12 +1,13 @@
 :root {
   color-scheme: dark;
-  --bg: #08111f;
-  --panel: rgba(14, 24, 42, 0.9);
-  --panel-border: rgba(148, 163, 184, 0.2);
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --accent: #38bdf8;
-  --accent-strong: #22c55e;
+  --bg: #0f1014;
+  --pane: #15161b;
+  --pane-strong: #1c1d23;
+  --border: #2b2d35;
+  --text: #eeeeee;
+  --muted: #a5a7ad;
+  --accent: #7dd3fc;
+  --danger: #ff8a8a;
 }
 
 * {
@@ -17,118 +18,155 @@ html,
 body {
   margin: 0;
   min-height: 100%;
-  background:
-    radial-gradient(circle at top, rgba(56, 189, 248, 0.18), transparent 36%),
-    linear-gradient(180deg, #020617 0%, #08111f 100%);
+  background: var(--bg);
   color: var(--text);
-  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, serif;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
 }
 
 body {
-  padding: 32px;
+  min-height: 100vh;
 }
 
-a {
-  color: inherit;
+button,
+textarea {
+  font: inherit;
 }
 
-main {
-  max-width: 960px;
-  margin: 0 auto;
+button {
+  cursor: pointer;
 }
 
-.shell {
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.app-shell {
   display: grid;
-  gap: 20px;
+  grid-template-columns: minmax(280px, 34vw) minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--border);
+  gap: 1px;
 }
 
-.hero,
-.panel {
-  border: 1px solid var(--panel-border);
-  background: var(--panel);
-  border-radius: 24px;
-  padding: 24px;
-  backdrop-filter: blur(16px);
-  box-shadow: 0 18px 60px rgba(2, 6, 23, 0.35);
+.agent-panel,
+.output-panel {
+  min-width: 0;
+  background: var(--pane);
 }
 
-.eyebrow {
-  display: inline-flex;
-  align-items: center;
+.agent-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  max-height: 100vh;
+}
+
+.message-list {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  padding: 8px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--accent);
-  background: rgba(14, 165, 233, 0.08);
-}
-
-h1,
-h2,
-h3 {
-  margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
-}
-
-h1 {
-  font-size: clamp(2.8rem, 7vw, 5rem);
-  line-height: 0.96;
-  margin-top: 16px;
-}
-
-p,
-li,
-code,
-pre {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-}
-
-p {
-  color: var(--muted);
-  line-height: 1.7;
-}
-
-ul {
-  margin: 0;
-  padding-left: 18px;
-}
-
-.grid {
-  display: grid;
-  gap: 20px;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-}
-
-.card-title {
-  font-size: 1.1rem;
-  margin-bottom: 10px;
-}
-
-.endpoint {
-  border-left: 3px solid var(--accent);
-  padding-left: 14px;
-  margin: 12px 0;
-}
-
-pre {
+  min-height: 0;
+  padding: 14px;
   overflow: auto;
-  padding: 16px;
-  border-radius: 16px;
-  background: rgba(2, 6, 23, 0.72);
-  color: #cbd5e1;
 }
 
-@media (max-width: 720px) {
-  body {
-    padding: 18px;
-  }
-
-  .hero,
-  .panel {
-    padding: 18px;
-    border-radius: 20px;
-  }
+.message {
+  width: fit-content;
+  max-width: 92%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--pane-strong);
 }
 
+.message.user {
+  align-self: flex-end;
+  border-color: rgba(125, 211, 252, 0.38);
+}
+
+.message.pending {
+  color: var(--muted);
+}
+
+.message p,
+.output-surface p,
+.error-banner {
+  margin: 0;
+  line-height: 1.48;
+}
+
+.error-banner {
+  margin: 0 14px 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 138, 138, 0.4);
+  border-radius: 8px;
+  color: var(--danger);
+  background: rgba(255, 138, 138, 0.08);
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--pane);
+}
+
+.composer textarea {
+  width: 100%;
+  min-height: 52px;
+  max-height: 160px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  padding: 11px 12px;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.composer textarea:focus {
+  border-color: rgba(125, 211, 252, 0.76);
+}
+
+.composer button {
+  min-height: 52px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #06131a;
+  font-weight: 800;
+}
+
+.output-panel {
+  padding: 14px;
+}
+
+.output-surface {
+  min-height: 100%;
+  padding: 2px;
+  white-space: pre-wrap;
+}
+
+.output-surface p {
+  color: var(--text);
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(50vh, auto) minmax(50vh, auto);
+  }
+
+  .agent-panel {
+    max-height: none;
+  }
+
+  .composer {
+    grid-template-columns: 1fr;
+  }
+}

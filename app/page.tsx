@@ -1,57 +1,143 @@
-const curlExample = `curl -X POST http://localhost:3000/api/lab/run \\
-  -F "file=@public/data/demo-insurance.csv" \\
-  -F "targetColumn=charges" \\
-  -F "intentPrompt=Create a model to predict insurance charges"`;
+"use client";
+
+import { FormEvent, useMemo, useRef, useState } from "react";
+
+type Role = "user" | "assistant" | "system";
+
+type ChatMessage = {
+  id: string;
+  role: Role;
+  content: string;
+};
+
+type ChatResponse = {
+  message?: ChatMessage;
+  error?: string;
+};
+
+const starterMessages: ChatMessage[] = [
+  {
+    id: "system-ready",
+    role: "system",
+    content:
+      "Coding agent shell is connected to /api/chat.",
+  },
+  {
+    id: "assistant-ready",
+    role: "assistant",
+    content: "Tell me what to build or inspect.",
+  },
+];
 
 export default function HomePage() {
+  const [messages, setMessages] = useState<ChatMessage[]>(starterMessages);
+  const [draft, setDraft] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const visibleMessages = useMemo(
+    () => messages.filter((message) => message.role !== "system"),
+    [messages],
+  );
+  const output = [...messages].reverse().find((message) => message.role === "assistant");
+
+  async function sendMessage(content: string) {
+    const trimmed = content.trim();
+
+    if (!trimmed || isSending) {
+      return;
+    }
+
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: trimmed,
+    };
+
+    const nextMessages = [...messages, userMessage];
+    setMessages(nextMessages);
+    setDraft("");
+    setIsSending(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: nextMessages.map(({ role, content }) => ({ role, content })),
+        }),
+      });
+
+      const data = (await response.json()) as ChatResponse;
+
+      if (!response.ok || !data.message) {
+        throw new Error(data.error ?? "The chat backend did not return a message.");
+      }
+
+      setMessages((current) => [...current, data.message as ChatMessage]);
+    } catch (caughtError) {
+      const message =
+        caughtError instanceof Error ? caughtError.message : "Unknown chat error.";
+      setError(message);
+    } finally {
+      setIsSending(false);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void sendMessage(draft);
+  }
+
   return (
-    <main className="shell">
-      <section className="hero">
-        <span className="eyebrow">ML-Labs Backend</span>
-        <h1>Autonomous ML pipeline APIs are ready for the frontend pass.</h1>
-        <p>
-          This scaffold intentionally keeps the UI minimal and puts the weight on the
-          backend: deterministic demo runs, real CSV training, report generation, and
-          a demo prediction playground contract.
-        </p>
+    <main className="app-shell">
+      <section className="agent-panel" aria-label="Agent panel">
+        <div className="message-list" aria-live="polite">
+          {visibleMessages.map((message) => (
+            <article className={`message ${message.role}`} key={message.id}>
+              <p>{message.content}</p>
+            </article>
+          ))}
+
+          {isSending ? (
+            <article className="message assistant pending">
+              <p>Thinking...</p>
+            </article>
+          ) : null}
+        </div>
+
+        {error ? <p className="error-banner">{error}</p> : null}
+
+        <form className="composer" onSubmit={handleSubmit}>
+          <textarea
+            ref={inputRef}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+            placeholder="Ask the agent..."
+            rows={3}
+          />
+          <button type="submit" disabled={isSending || draft.trim().length === 0}>
+            Send
+          </button>
+        </form>
       </section>
 
-      <section className="grid">
-        <article className="panel">
-          <h2 className="card-title">Available routes</h2>
-          <div className="endpoint">
-            <strong>GET /api/lab/demo</strong>
-            <p>Returns a complete deterministic regression run for the live demo.</p>
-          </div>
-          <div className="endpoint">
-            <strong>POST /api/lab/run</strong>
-            <p>
-              Accepts <code>multipart/form-data</code> with a CSV, target column, and
-              optional research intent prompt.
-            </p>
-          </div>
-          <div className="endpoint">
-            <strong>POST /api/lab/predict</strong>
-            <p>Scores demo-playground inputs against the bundled insurance model logic.</p>
-          </div>
-        </article>
-
-        <article className="panel">
-          <h2 className="card-title">What the frontend can trust</h2>
-          <ul>
-            <li>Shared `LabRunResult` schema for both demo and real runs.</li>
-            <li>Rich agent trace with many visible pipeline stages.</li>
-            <li>Inline artifact export content for `train.py`, `evaluate.py`, and `report.md`.</li>
-            <li>Regression-first demo payload plus a live prediction contract.</li>
-          </ul>
-        </article>
-      </section>
-
-      <section className="panel">
-        <h2 className="card-title">Smoke test</h2>
-        <pre>{curlExample}</pre>
+      <section className="output-panel" aria-label="Output panel">
+        <div className="output-surface">
+          <p>{output?.content ?? ""}</p>
+        </div>
       </section>
     </main>
   );
 }
-
