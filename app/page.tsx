@@ -3,6 +3,11 @@ const curlExample = `curl -X POST http://localhost:3000/api/lab/run \\
   -F "targetColumn=churn" \\
   -F "intentPrompt=Create a model to predict churn"`;
 
+const kaggleCurlExample = `curl -X POST http://localhost:3000/api/lab/run \\
+  -F "kaggleUrl=https://www.kaggle.com/datasets/waddahali/kaggle-competition-graph-dataset" \\
+  -F "targetColumn=type" \\
+  -F "intentPrompt=Create a model that predicts graph node type"`;
+
 export default function HomePage() {
   return (
     <main className="shell">
@@ -26,8 +31,10 @@ export default function HomePage() {
           <div className="endpoint">
             <strong>POST /api/lab/run</strong>
             <p>
-              Accepts <code>multipart/form-data</code> with a CSV, target column, and
-              optional research intent prompt.
+              Accepts <code>multipart/form-data</code> with either a CSV upload or a
+              Kaggle dataset URL/slug, plus the target column and optional research
+              intent prompt. If a Kaggle dataset has multiple CSV files, the backend
+              auto-selects the one file that uniquely contains the target column.
             </p>
           </div>
           <div className="endpoint">
@@ -50,6 +57,7 @@ export default function HomePage() {
       <section className="panel">
         <h2 className="card-title">Smoke test</h2>
         <pre>{curlExample}</pre>
+        <pre>{kaggleCurlExample}</pre>
       </section>
     </main>
   );

@@ -30,14 +30,21 @@ type BuildRunOptions = {
   runId: string;
   scenario?: ProblemType;
   intentPrompt?: string;
+  sourceDescription?: string;
 };
 
 export async function runLab({
   file,
+  kaggleDataset,
+  kaggleFilePath,
+  kaggleUrl,
   targetColumn,
   intentPrompt,
 }: {
-  file: File;
+  file?: File;
+  kaggleDataset?: string;
+  kaggleFilePath?: string;
+  kaggleUrl?: string;
   targetColumn: string;
   intentPrompt?: string;
 }): Promise<LabRunResult> {
@@ -45,23 +52,32 @@ export async function runLab({
     throw new Error("A target column is required.");
   }
 
-  if (!file.name.toLowerCase().endsWith(".csv")) {
+  if (!file && !kaggleDataset && !kaggleUrl) {
+    throw new Error("Provide either a CSV file upload or a Kaggle dataset URL/slug.");
+  }
+
+  if (file && !file.name.toLowerCase().endsWith(".csv")) {
     throw new Error("Only CSV uploads are supported in this MVP.");
   }
 
   const runId = buildRunId(targetColumn);
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ml-labs-"));
-  const tempFilePath = path.join(tempDir, sanitizeFilename(file.name));
+  const tempDir = file ? await fs.mkdtemp(path.join(os.tmpdir(), "ml-labs-")) : null;
+  const tempFilePath = file && tempDir ? path.join(tempDir, sanitizeFilename(file.name)) : null;
   const bundleDir = await prepareRuntimeBundle(runId);
 
   try {
-    const fileBuffer = Buffer.from(await file.arrayBuffer());
-    await fs.writeFile(tempFilePath, fileBuffer);
+    if (file && tempFilePath) {
+      const fileBuffer = Buffer.from(await file.arrayBuffer());
+      await fs.writeFile(tempFilePath, fileBuffer);
+    }
 
     const runnerResult = await executePythonTrain({
       bundleDir,
-      csvPath: tempFilePath,
+      csvPath: tempFilePath ?? undefined,
       intentPrompt,
+      kaggleDataset,
+      kaggleFilePath,
+      kaggleUrl,
       runId,
       targetColumn,
     });
@@ -70,12 +86,22 @@ export async function runLab({
       runId,
       scenario: runnerResult.datasetProfile.problemType,
       intentPrompt,
+      sourceDescription:
+        runnerResult.metadata?.sourceLabel ??
+        describeSource({
+          file,
+          kaggleDataset,
+          kaggleFilePath,
+          kaggleUrl,
+        }),
     });
   } catch (error) {
     await removeRuntimeBundle(runId);
     throw error;
   } finally {
-    await fs.rm(tempDir, { recursive: true, force: true });
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   }
 }
 
@@ -100,6 +126,7 @@ export function buildLabRunFromRunnerResult(
     leaderboard,
     runnerResult.criticReport,
     runnerResult.metadata?.modelFailures ?? [],
+    options.sourceDescription ?? runnerResult.metadata?.sourceLabel ?? "the dataset source",
   );
 
   return buildCompleteRun(
@@ -125,26 +152,38 @@ async function executePythonTrain({
   bundleDir,
   csvPath,
   intentPrompt,
+  kaggleDataset,
+  kaggleFilePath,
+  kaggleUrl,
   runId,
   targetColumn,
 }: {
   bundleDir: string;
-  csvPath: string;
+  csvPath?: string;
   intentPrompt?: string;
+  kaggleDataset?: string;
+  kaggleFilePath?: string;
+  kaggleUrl?: string;
   runId: string;
   targetColumn: string;
 }): Promise<PythonRunnerResult> {
-  const args = [
-    "train",
-    "--csv",
-    csvPath,
-    "--target",
-    targetColumn,
-    "--run-id",
-    runId,
-    "--bundle-dir",
-    bundleDir,
-  ];
+  const args = ["train", "--target", targetColumn, "--run-id", runId, "--bundle-dir", bundleDir];
+
+  if (csvPath) {
+    args.push("--csv", csvPath);
+  }
+
+  if (kaggleDataset) {
+    args.push("--kaggle-dataset", kaggleDataset);
+  }
+
+  if (kaggleUrl) {
+    args.push("--kaggle-url", kaggleUrl);
+  }
+
+  if (kaggleFilePath) {
+    args.push("--kaggle-file-path", kaggleFilePath);
+  }
 
   if (intentPrompt) {
     args.push("--intent", intentPrompt);
@@ -220,6 +259,7 @@ function buildAgentTrace(
   leaderboard: LeaderboardEntry[],
   criticReport: CriticReport,
   modelFailures: string[],
+  sourceDescription: string,
 ): AgentTraceItem[] {
   const bestModel = leaderboard[0];
   const warningStatus = criticReport.warnings.length > 0 ? "warning" : "complete";
@@ -229,7 +269,7 @@ function buildAgentTrace(
       agent: "Data Intake Agent",
       stageId: "intake",
       status: "complete",
-      message: `Ingested ${datasetProfile.rows} rows across ${datasetProfile.columns} columns from the uploaded CSV.`,
+      message: `Ingested ${datasetProfile.rows} rows across ${datasetProfile.columns} columns from ${sourceDescription}.`,
     },
     {
       agent: "Schema Validation Agent",
@@ -329,6 +369,30 @@ function buildRunId(targetColumn: string): string {
 
 function sanitizeFilename(filename: string): string {
   return filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function describeSource({
+  file,
+  kaggleDataset,
+  kaggleFilePath,
+  kaggleUrl,
+}: {
+  file?: File;
+  kaggleDataset?: string;
+  kaggleFilePath?: string;
+  kaggleUrl?: string;
+}): string {
+  if (file) {
+    return "the uploaded CSV";
+  }
+
+  const datasetIdentifier = kaggleDataset ?? kaggleUrl;
+  if (!datasetIdentifier) {
+    return "the dataset source";
+  }
+
+  const fileSuffix = kaggleFilePath ? ` (${kaggleFilePath})` : "";
+  return `Kaggle dataset "${datasetIdentifier}"${fileSuffix}`;
 }
 
 function round(value: number): number {

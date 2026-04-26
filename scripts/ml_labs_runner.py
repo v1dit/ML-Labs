@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 
 import argparse
+import csv
 import json
+import re
 import sys
 from pathlib import Path
 from time import time
 from typing import Any
+from urllib.parse import urlparse
 
 import joblib
+import kagglehub
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
@@ -47,7 +51,22 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
     train_parser = subparsers.add_parser("train", help="Train a lab run and emit JSON results.")
-    train_parser.add_argument("--csv", required=True, help="Path to the CSV file.")
+    train_parser.add_argument("--csv", required=False, help="Path to the CSV file.")
+    train_parser.add_argument(
+        "--kaggle-dataset",
+        required=False,
+        help="Kaggle dataset slug in owner/dataset format.",
+    )
+    train_parser.add_argument(
+        "--kaggle-url",
+        required=False,
+        help="Full Kaggle dataset URL.",
+    )
+    train_parser.add_argument(
+        "--kaggle-file-path",
+        required=False,
+        help="Specific CSV file inside the Kaggle dataset when multiple CSVs exist.",
+    )
     train_parser.add_argument("--target", required=True, help="Name of the target column.")
     train_parser.add_argument("--intent", required=False, help="Narrative prompt for the run.")
     train_parser.add_argument("--run-id", required=True, help="Run identifier for bundle storage.")
@@ -372,6 +391,111 @@ def build_visualizations(
     return [visualization for visualization in visualizations if visualization is not None]
 
 
+def normalize_kaggle_identifier(dataset: str | None, url: str | None) -> str | None:
+    if dataset and dataset.strip():
+        normalized = dataset.strip().strip("/")
+        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", normalized):
+            return normalized
+        raise ValueError(
+            "Kaggle dataset slugs must look like 'owner/dataset'."
+        )
+
+    if not url or not url.strip():
+        return None
+
+    parsed = urlparse(url.strip())
+    path_parts = [part for part in parsed.path.split("/") if part]
+    try:
+        datasets_index = path_parts.index("datasets")
+    except ValueError as exc:
+        raise ValueError(
+            "Kaggle URLs must point to a dataset page like https://www.kaggle.com/datasets/owner/dataset."
+        ) from exc
+
+    if len(path_parts) < datasets_index + 3:
+        raise ValueError(
+            "Kaggle URLs must include both the owner and dataset slug."
+        )
+
+    owner = path_parts[datasets_index + 1]
+    dataset_slug = path_parts[datasets_index + 2]
+    return f"{owner}/{dataset_slug}"
+
+
+def select_kaggle_csv(
+    dataset_dir: Path,
+    target_column: str,
+    requested_file_path: str | None,
+) -> Path:
+    if requested_file_path and requested_file_path.strip():
+        requested_relative = Path(requested_file_path.strip())
+        candidate = (dataset_dir / requested_relative).resolve()
+        dataset_root = dataset_dir.resolve()
+        if dataset_root not in candidate.parents and candidate != dataset_root:
+            raise ValueError("Kaggle file paths must stay inside the downloaded dataset directory.")
+        if not candidate.exists():
+            raise ValueError(
+                f"Kaggle file '{requested_file_path}' was not found in the downloaded dataset."
+            )
+        if candidate.suffix.lower() != ".csv":
+            raise ValueError("Kaggle file paths must point to a CSV file.")
+        return candidate
+
+    csv_files = sorted(path for path in dataset_dir.rglob("*.csv") if path.is_file())
+    if not csv_files:
+        raise ValueError("The Kaggle dataset does not contain any CSV files.")
+
+    if len(csv_files) == 1:
+        return csv_files[0]
+
+    matching_files: list[Path] = []
+    for csv_file in csv_files:
+        with csv_file.open(newline="") as handle:
+            reader = csv.reader(handle)
+            header = next(reader, [])
+        if target_column in header:
+            matching_files.append(csv_file)
+
+    if len(matching_files) == 1:
+        return matching_files[0]
+
+    options = ", ".join(str(path.relative_to(dataset_dir)) for path in csv_files[:10])
+    if len(matching_files) > 1:
+        raise ValueError(
+            f"Multiple Kaggle CSV files contain target column '{target_column}'. "
+            f"Provide kaggleFilePath. Options: {options}"
+        )
+
+    raise ValueError(
+        f"Multiple Kaggle CSV files were found and none uniquely matched target column '{target_column}'. "
+        f"Provide kaggleFilePath. Options: {options}"
+    )
+
+
+def resolve_training_source(args: argparse.Namespace) -> tuple[Path, dict[str, str]]:
+    if args.csv:
+        csv_path = Path(args.csv).expanduser().resolve()
+        return csv_path, {
+            "sourceKind": "upload",
+            "sourceLabel": "the uploaded CSV",
+            "sourcePath": str(csv_path),
+        }
+
+    kaggle_identifier = normalize_kaggle_identifier(args.kaggle_dataset, args.kaggle_url)
+    if kaggle_identifier is None:
+        raise ValueError("Provide either a CSV file or a Kaggle dataset URL/slug.")
+
+    dataset_dir = Path(kagglehub.dataset_download(kaggle_identifier))
+    csv_path = select_kaggle_csv(dataset_dir, args.target, args.kaggle_file_path)
+    relative_csv_path = str(csv_path.relative_to(dataset_dir))
+
+    return csv_path, {
+        "sourceKind": "kaggle",
+        "sourceLabel": f'Kaggle dataset "{kaggle_identifier}" ({relative_csv_path})',
+        "sourcePath": relative_csv_path,
+    }
+
+
 def build_missingness_visualization(df: pd.DataFrame) -> dict[str, Any]:
     return {
         "id": "missingness-summary",
@@ -631,10 +755,11 @@ def resolve_positive_label(y: pd.Series) -> Any | None:
 
 
 def train_mode(args: argparse.Namespace) -> None:
-    df = pd.read_csv(args.csv)
+    csv_path, source_metadata = resolve_training_source(args)
+    df = pd.read_csv(csv_path)
 
     if args.target not in df.columns:
-        raise ValueError(f"Target column '{args.target}' was not found in the uploaded CSV.")
+        raise ValueError(f"Target column '{args.target}' was not found in the selected CSV.")
 
     df = df.dropna(subset=[args.target]).copy()
     if df.empty:
@@ -750,6 +875,9 @@ def train_mode(args: argparse.Namespace) -> None:
             else None,
             "modelFailures": model_failures,
             "intentPrompt": args.intent,
+            "sourceKind": source_metadata["sourceKind"],
+            "sourceLabel": source_metadata["sourceLabel"],
+            "sourcePath": source_metadata["sourcePath"],
             "trainingNote": f"Best model selected from {len(leaderboard)} successful candidates.",
         },
     }

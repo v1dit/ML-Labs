@@ -140,5 +140,8 @@ export type PythonRunnerResult = {
     modelFailures?: string[];
     intentPrompt?: string;
     trainingNote?: string | null;
+    sourceKind?: "upload" | "kaggle";
+    sourceLabel?: string;
+    sourcePath?: string;
   };
 };
