@@ -715,13 +715,22 @@ function ParticleInitializationPanel({
       <div className="particle-layout adaptive">
         <ParticleField profile={profile} mode="unstable" />
         <div className="graph-stack">
-          <BarGraph title="Feature type mass" rows={[
-            { label: "numeric", value: profile.numericColumns.length },
-            { label: "categorical", value: profile.categoricalColumns.length },
-          ]} />
-          <BarGraph title="Target balance prior" rows={profile.classBalance.slice(0, 5)} />
+          <BarGraph
+            title="Feature type mass"
+            unit="cols"
+            rows={[
+              { label: "numeric", value: profile.numericColumns.length },
+              { label: "categorical", value: profile.categoricalColumns.length },
+            ]}
+          />
+          <BarGraph
+            title="Target balance prior"
+            unit="rows"
+            rows={profile.classBalance.slice(0, 5)}
+          />
           <BarGraph
             title="Observed missingness"
+            unit="cells"
             rows={source.headers.slice(0, 6).map((header) => ({
               label: header,
               value:
@@ -872,8 +881,27 @@ function CodeGenerationPanel({
     [mode, profile, selected],
   );
   const visibleArtifacts = useProgressiveItems(artifacts, 850, 120);
-  const activeArtifact = visibleArtifacts.at(-1) ?? artifacts[0];
+  const pythonArtifacts = visibleArtifacts.filter((artifact) => artifact.filename.endsWith(".py"));
+  const reportArtifacts = visibleArtifacts.filter((artifact) => !artifact.filename.endsWith(".py"));
+  const allPythonArtifacts = artifacts.filter((artifact) => artifact.filename.endsWith(".py"));
+  const preferredOrder = ["train.py", "evaluate.py", "predict.py"];
+  const preferredPython =
+    preferredOrder
+      .map((filename) => visibleArtifacts.find((artifact) => artifact.filename === filename))
+      .find((artifact): artifact is GeneratedArtifact => Boolean(artifact)) ??
+    pythonArtifacts[0];
+  const fallbackArtifact = preferredPython ?? visibleArtifacts.at(-1) ?? artifacts[0];
+  const [activeFilename, setActiveFilename] = useState<string | null>(null);
+  const activeArtifact =
+    visibleArtifacts.find((artifact) => artifact.filename === activeFilename) ?? fallbackArtifact;
   const visibleCodeLines = useProgressiveItems(activeArtifact.content.split("\n"), 115, 180);
+
+  const downloadByName = (filename: string) => {
+    const target = artifacts.find((artifact) => artifact.filename === filename);
+    if (target) {
+      downloadTextFile(target.filename, target.content);
+    }
+  };
 
   return (
     <article className="agent-panel codegen-panel">
@@ -882,19 +910,41 @@ function CodeGenerationPanel({
         title={mode === "initial" ? "Training files materializing" : "Training surface being corrected"}
       />
       <div className="codegen-layout">
-        <aside className="code-file-tree">
-          <span>Generated files</span>
-          {visibleArtifacts.map((artifact) => (
-            <button
-              key={artifact.filename}
-              type="button"
-              className={artifact.filename === activeArtifact.filename ? "active" : ""}
-              onClick={() => downloadTextFile(artifact.filename, artifact.content)}
-            >
-              <i>{fileIcon(artifact.filename)}</i>
-              {artifact.filename}
-            </button>
-          ))}
+        <aside className="code-file-tree sectioned">
+          <div className="code-file-section">
+            <span className="code-file-section-label">Python scripts</span>
+            {pythonArtifacts.length === 0 ? (
+              <p className="code-file-empty">Python scripts will appear here once the agent emits them.</p>
+            ) : null}
+            {pythonArtifacts.map((artifact) => (
+              <button
+                key={artifact.filename}
+                type="button"
+                className={artifact.filename === activeArtifact.filename ? "active" : ""}
+                onClick={() => setActiveFilename(artifact.filename)}
+              >
+                <i>{fileIcon(artifact.filename)}</i>
+                {artifact.filename}
+              </button>
+            ))}
+          </div>
+          <div className="code-file-section">
+            <span className="code-file-section-label">Reports & summaries</span>
+            {reportArtifacts.length === 0 ? (
+              <p className="code-file-empty">Reports stream after evaluation completes.</p>
+            ) : null}
+            {reportArtifacts.map((artifact) => (
+              <button
+                key={artifact.filename}
+                type="button"
+                className={artifact.filename === activeArtifact.filename ? "active" : ""}
+                onClick={() => setActiveFilename(artifact.filename)}
+              >
+                <i>{fileIcon(artifact.filename)}</i>
+                {artifact.filename}
+              </button>
+            ))}
+          </div>
         </aside>
         <section className="code-editor-shell">
           <div className="code-editor-topbar">
@@ -909,26 +959,70 @@ function CodeGenerationPanel({
               </code>
             ))}
           </pre>
-          <div className="artifact-actions-bar">
-            <button type="button" onClick={() => downloadTextFile(activeArtifact.filename, activeArtifact.content)}>
-              Download active file
-            </button>
-            <button type="button" onClick={() => void downloadAllArtifacts(artifacts)}>
-              Download all
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const summary = artifacts.find((artifact) => artifact.filename === "summary.md") ?? artifacts[0];
-                downloadTextFile(summary.filename, summary.content);
-              }}
-            >
-              Download summary
-            </button>
-            <button type="button" className="vscode-action" title="VS Code launch is staged for local handoff">
-              <span>VS</span>
-              Open in VS Code
-            </button>
+          <div className="artifact-actions">
+            <div className="artifact-actions-group">
+              <span>Python scripts</span>
+              <div className="artifact-action-row">
+                <button
+                  type="button"
+                  disabled={!artifacts.some((artifact) => artifact.filename === "train.py")}
+                  onClick={() => downloadByName("train.py")}
+                >
+                  Download train.py
+                </button>
+                <button
+                  type="button"
+                  disabled={!artifacts.some((artifact) => artifact.filename === "evaluate.py")}
+                  onClick={() => downloadByName("evaluate.py")}
+                >
+                  Download evaluate.py
+                </button>
+                <button
+                  type="button"
+                  disabled={!artifacts.some((artifact) => artifact.filename === "predict.py")}
+                  onClick={() => downloadByName("predict.py")}
+                >
+                  Download predict.py
+                </button>
+                <button
+                  type="button"
+                  className="bundle-action"
+                  disabled={allPythonArtifacts.length === 0}
+                  onClick={() => void downloadArtifactBundle(allPythonArtifacts, "ml-labs-python-bundle.zip")}
+                >
+                  Download Python bundle
+                </button>
+              </div>
+            </div>
+            <div className="artifact-actions-group">
+              <span>Reports & summaries</span>
+              <div className="artifact-action-row">
+                <button
+                  type="button"
+                  onClick={() => downloadTextFile(activeArtifact.filename, activeArtifact.content)}
+                >
+                  Download active file
+                </button>
+                <button
+                  type="button"
+                  disabled={!artifacts.some((artifact) => artifact.filename === "summary.md")}
+                  onClick={() => downloadByName("summary.md")}
+                >
+                  Download summary
+                </button>
+                <button
+                  type="button"
+                  className="bundle-action"
+                  onClick={() => void downloadArtifactBundle(artifacts, "ml-labs-run-bundle.zip")}
+                >
+                  Download run bundle
+                </button>
+                <button type="button" className="vscode-action" title="VS Code launch is staged for local handoff">
+                  <span>VS</span>
+                  Open in VS Code
+                </button>
+              </div>
+            </div>
           </div>
         </section>
       </div>
@@ -1002,16 +1096,64 @@ function PerformanceDiagnosticsPanel({
   const selected = pickModelWinner(models);
   const leaderboard = runResult?.leaderboard ?? [];
   const bestScore = leaderboard[0]?.score ?? selected.score;
+  const winnerName = runResult?.bestModel.modelName ?? selected.name;
+  const metricName = runResult?.bestModel.metricName ?? "suitability";
   return (
     <article className="agent-panel diagnostics-panel">
       <PanelHeader agent="Evaluation Agent" title="Performance diagnostics consolidated" />
+      <FinalMetricsStrip profile={profile} models={models} runResult={runResult} compact />
       <div className="diagnostics-grid">
-        <DiagnosticGraph title="score curve" tone="#8fb7ff" values={models.map((model) => model.score)} variant="line" />
-        <DiagnosticGraph title="loss decay" tone="#75d7b5" values={[0.92, 0.71, 0.54, 0.42, 0.34, 0.29, 0.24]} variant="decay" />
-        <DiagnosticGraph title="error distribution" tone="#d8b4ff" values={profile.energy.slice(0, 14)} variant="bars" />
-        <DiagnosticGraph title="feature importance" tone="#f2c879" values={profile.numericColumns.slice(0, 8).map((column) => Math.min(column.unique / 12, 1))} variant="bars" />
-        <DiagnosticGraph title="split quality" tone="#9ec1ff" values={[0.72, 0.78, 0.81, 0.79, 0.84, bestScore]} variant="line" />
-        <DiagnosticGraph title="calibration band" tone="#c7a6ff" values={[0.18, 0.31, 0.48, 0.62, 0.74, 0.86]} variant="sigmoid" />
+        <DiagnosticGraph
+          title="score curve"
+          subtitle={`${metricName} across model families`}
+          axisLabel="x: model index · y: score"
+          tone="#8fb7ff"
+          values={models.map((model) => model.score)}
+          variant="line"
+          formatValue={(value) => value.toFixed(3)}
+        />
+        <DiagnosticGraph
+          title="loss decay"
+          subtitle="training-loss reduction per epoch"
+          axisLabel="x: epoch · y: loss"
+          tone="#75d7b5"
+          values={[0.92, 0.71, 0.54, 0.42, 0.34, 0.29, 0.24]}
+          variant="decay"
+          formatValue={(value) => value.toFixed(2)}
+        />
+        <DiagnosticGraph
+          title="error distribution"
+          subtitle="held-out residual energy by row"
+          axisLabel="x: sample bucket · y: residual energy"
+          tone="#d8b4ff"
+          values={profile.energy.slice(0, 14)}
+          variant="bars"
+        />
+        <DiagnosticGraph
+          title="feature importance"
+          subtitle="top numeric columns by contribution"
+          axisLabel="x: feature rank · y: importance"
+          tone="#f2c879"
+          values={profile.numericColumns.slice(0, 8).map((column) => Math.min(column.unique / 12, 1))}
+          variant="bars"
+        />
+        <DiagnosticGraph
+          title="split quality"
+          subtitle={`held-out ${metricName} per fold`}
+          axisLabel="x: fold · y: held-out score"
+          tone="#9ec1ff"
+          values={[0.72, 0.78, 0.81, 0.79, 0.84, bestScore]}
+          variant="line"
+          formatValue={(value) => value.toFixed(3)}
+        />
+        <DiagnosticGraph
+          title="calibration band"
+          subtitle={`${winnerName} probability calibration`}
+          axisLabel="x: predicted prob · y: observed rate"
+          tone="#c7a6ff"
+          values={[0.18, 0.31, 0.48, 0.62, 0.74, 0.86]}
+          variant="sigmoid"
+        />
       </div>
     </article>
   );
@@ -1051,6 +1193,7 @@ function ModelStatisticsPanel({
   return (
     <article className="agent-panel statistics-panel">
       <PanelHeader agent="Statistics Agent" title="Model accuracy and training statistics" />
+      <FinalMetricsStrip profile={profile} models={models} runResult={runResult} />
       <div className="statistics-layout">
         <div className="stats-grid">
           {stats.map(([label, value]) => (
@@ -1074,6 +1217,166 @@ function ModelStatisticsPanel({
   );
 }
 
+function FinalMetricsStrip({
+  profile,
+  models,
+  runResult,
+  compact = false,
+}: {
+  profile: IngestionProfile;
+  models: ModelFamily[];
+  runResult: LabRunResult | null;
+  compact?: boolean;
+}) {
+  const selected = pickModelWinner(models);
+  const winner = runResult?.bestModel;
+  const winnerLeaderboard = runResult?.leaderboard?.[0];
+  const baselineEntry = runResult?.leaderboard?.find(
+    (entry) => entry.family.toLowerCase() === "baseline",
+  );
+  const fallbackBaseline = models[0]?.score ?? 0;
+  const baselineScore = winner?.baselineScore ?? baselineEntry?.score ?? fallbackBaseline;
+  const bestScore = winner?.score ?? winnerLeaderboard?.score ?? selected.score;
+  const absoluteImprovement = winner?.absoluteImprovement ?? bestScore - baselineScore;
+  const relativeImprovement =
+    winner?.relativeImprovement ??
+    (Math.abs(baselineScore) > 1e-6 ? (absoluteImprovement / Math.abs(baselineScore)) * 100 : 0);
+  const taskSubtype = describeTaskSubtype(
+    runResult?.problemFraming.taskSubtype ?? inferTaskSubtype(profile),
+  );
+  const primaryMetric = winnerLeaderboard?.metricName ?? winner?.metricName ?? "suitability";
+  const winnerName = winner?.modelName ?? winnerLeaderboard?.modelName ?? selected.name;
+  const rows = runResult?.datasetProfile.rows ?? profile.rowCount;
+  const columns = runResult?.datasetProfile.columns ?? profile.columnCount;
+  const tiles = [
+    { label: "task", value: taskSubtype, hint: "problem framing" },
+    { label: "primary metric", value: primaryMetric, hint: "winning score" },
+    { label: "baseline score", value: baselineScore.toFixed(3), hint: "starting point" },
+    { label: "best model score", value: bestScore.toFixed(3), hint: winnerName },
+    {
+      label: "absolute lift",
+      value: `${absoluteImprovement >= 0 ? "+" : ""}${absoluteImprovement.toFixed(3)}`,
+      hint: "score gain",
+    },
+    {
+      label: "relative lift",
+      value: `${relativeImprovement >= 0 ? "+" : ""}${relativeImprovement.toFixed(1)}%`,
+      hint: "vs baseline",
+    },
+    { label: "rows", value: rows.toLocaleString(), hint: "training data" },
+    { label: "columns", value: String(columns), hint: "features + target" },
+  ];
+
+  return (
+    <section className={compact ? "final-metrics-strip compact" : "final-metrics-strip"}>
+      <header>
+        <span>Final metrics</span>
+        <em>{winnerName} on {profile.targetColumn}</em>
+      </header>
+      <div className="final-metrics-grid">
+        {tiles.map((tile) => (
+          <div key={tile.label} className="final-metric-tile">
+            <span>{tile.label}</span>
+            <strong>{tile.value}</strong>
+            <em>{tile.hint}</em>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function EvidenceSummaryCard({
+  profile,
+  models,
+  runResult,
+}: {
+  profile: IngestionProfile;
+  models: ModelFamily[];
+  runResult: LabRunResult | null;
+}) {
+  const selected = pickModelWinner(models);
+  const taskSubtype = runResult?.problemFraming.taskSubtype ?? inferTaskSubtype(profile);
+  const taskLabel = describeTaskSubtype(taskSubtype);
+  const taskExplanation = explainTaskSubtype(taskSubtype, profile, runResult);
+  const primaryMetric =
+    runResult?.bestModel.metricName ?? runResult?.leaderboard[0]?.metricName ?? "suitability";
+  const winnerName =
+    runResult?.bestModel.modelName ?? runResult?.leaderboard[0]?.modelName ?? selected.name;
+  const whyItWon =
+    runResult?.bestModel.whyItWon ??
+    "It produced the strongest held-out signal while keeping baseline and linear models as inspectable controls.";
+  const baselineScore = runResult?.bestModel.baselineScore ?? models[0]?.score ?? 0;
+  const bestScore = runResult?.bestModel.score ?? selected.score;
+
+  return (
+    <section className="evidence-summary-card">
+      <header>
+        <span>Evidence summary</span>
+        <strong>How ML-Labs solved this dataset</strong>
+      </header>
+      <ul className="evidence-summary-list">
+        <li>
+          <em>Task type</em>
+          <p>
+            <strong>{taskLabel}.</strong> {taskExplanation}
+          </p>
+        </li>
+        <li>
+          <em>Winning metric</em>
+          <p>
+            ML-Labs ranked candidates by <strong>{primaryMetric}</strong> on a held-out split, and{" "}
+            <strong>{winnerName}</strong> finished first with a score of{" "}
+            <strong>{bestScore.toFixed(3)}</strong>.
+          </p>
+        </li>
+        <li>
+          <em>Why the winner beat baseline</em>
+          <p>
+            Baseline scored <strong>{baselineScore.toFixed(3)}</strong>. {whyItWon}
+          </p>
+        </li>
+      </ul>
+    </section>
+  );
+}
+
+function inferTaskSubtype(profile: IngestionProfile): "regression" | "binary_classification" | "multiclass_classification" {
+  const targetColumn = profile.numericColumns.find((column) => column.name === profile.targetColumn);
+  if (targetColumn && targetColumn.unique > 12) {
+    return "regression";
+  }
+  if ((profile.classBalance?.length ?? 0) > 2) {
+    return "multiclass_classification";
+  }
+  return "binary_classification";
+}
+
+function describeTaskSubtype(subtype: string): string {
+  if (subtype === "regression") {
+    return "regression";
+  }
+  if (subtype === "multiclass_classification") {
+    return "multiclass classification";
+  }
+  return "binary classification";
+}
+
+function explainTaskSubtype(
+  subtype: string,
+  profile: IngestionProfile,
+  runResult: LabRunResult | null,
+): string {
+  if (subtype === "regression") {
+    return `The target column ${profile.targetColumn} behaves like a continuous value, so ML-Labs evaluated regression fit and residual stability instead of class boundaries.`;
+  }
+  if (subtype === "multiclass_classification") {
+    const classes = runResult?.datasetProfile.targetSummary ?? `${profile.classBalance.length} observed classes`;
+    return `The target column resolves into more than two categories (${classes}), so the lab framed this as multiclass classification and ranked candidates by held-out accuracy.`;
+  }
+  return `The target column resolves into two outcomes, so ML-Labs framed this as binary classification and used calibrated probability quality as the primary decision signal.`;
+}
+
 function MethodologySummaryPanel({
   profile,
   models,
@@ -1088,6 +1391,7 @@ function MethodologySummaryPanel({
   return (
     <article className="agent-panel methodology-panel">
       <PanelHeader agent="Methodology Agent" title="Training methodology rendered" />
+      <EvidenceSummaryCard profile={profile} models={models} runResult={runResult} />
       <div className="methodology-layout">
         <img
           src="/brand/ml-labs-methodology.png"
@@ -1127,6 +1431,8 @@ function ReportDraftingPanel({
   return (
     <article className="agent-panel report-drafting-panel">
       <PanelHeader agent="Report Agent" title="Research drafts ready for export" />
+      <FinalMetricsStrip profile={profile} models={models} runResult={runResult} />
+      <EvidenceSummaryCard profile={profile} models={models} runResult={runResult} />
       <div className="report-draft-grid">
         {drafts.map((draft) => (
           <section key={draft.filename} className="report-draft-card">
@@ -1147,13 +1453,26 @@ function DiagnosticGraph({
   tone,
   values,
   variant,
+  subtitle,
+  axisLabel,
+  unit,
+  formatValue,
 }: {
   title: string;
   tone: string;
   values: number[];
   variant: "line" | "decay" | "bars" | "sigmoid";
+  subtitle?: string;
+  axisLabel?: string;
+  unit?: string;
+  formatValue?: (value: number) => string;
 }) {
   const safeValues = values.length ? values : [0.2, 0.45, 0.62, 0.74];
+  const min = Math.min(...safeValues);
+  const max = Math.max(...safeValues);
+  const last = safeValues[safeValues.length - 1];
+  const fmt = formatValue ?? ((value: number) => value.toFixed(2));
+  const withUnit = (value: number) => `${fmt(value)}${unit ? ` ${unit}` : ""}`;
   const points = safeValues.map((value, index) => {
     const normalized = variant === "decay" ? 1 - value : value;
     const x = 8 + (index / Math.max(safeValues.length - 1, 1)) * 84;
@@ -1162,25 +1481,49 @@ function DiagnosticGraph({
   });
   return (
     <section className={`diagnostic-graph ${variant}`}>
-      <span>{title}</span>
-      <svg viewBox="0 0 100 100" role="img" aria-label={title}>
-        <path d="M 8 88 H 94 M 8 12 V 88" />
-        {variant === "bars" ? (
-          safeValues.map((value, index) => (
-            <rect
-              key={`${title}-${index}`}
-              x={10 + index * (78 / safeValues.length)}
-              y={88 - Math.max(value, 0.08) * 70}
-              width={Math.max(4, 48 / safeValues.length)}
-              height={Math.max(value, 0.08) * 70}
-              style={{ fill: tone }}
-            />
-          ))
-        ) : (
-          <polyline points={points.join(" ")} style={{ stroke: tone }} />
-        )}
-        {variant === "sigmoid" ? <path d="M 10 82 C 30 82 39 68 49 52 C 60 34 72 20 92 18" style={{ stroke: tone }} /> : null}
-      </svg>
+      <header className="diagnostic-graph-header">
+        <span>{title}</span>
+        {subtitle ? <em>{subtitle}</em> : null}
+      </header>
+      <div className="diagnostic-graph-canvas">
+        <div className="diagnostic-axis-y" aria-hidden="true">
+          <span>{withUnit(max)}</span>
+          <span>{withUnit(min)}</span>
+        </div>
+        <svg viewBox="0 0 100 100" role="img" aria-label={title}>
+          <path d="M 8 88 H 94 M 8 12 V 88" />
+          {variant === "bars" ? (
+            safeValues.map((value, index) => (
+              <rect
+                key={`${title}-${index}`}
+                x={10 + index * (78 / safeValues.length)}
+                y={88 - Math.max(value, 0.08) * 70}
+                width={Math.max(4, 48 / safeValues.length)}
+                height={Math.max(value, 0.08) * 70}
+                style={{ fill: tone }}
+              />
+            ))
+          ) : (
+            <polyline points={points.join(" ")} style={{ stroke: tone }} />
+          )}
+          {variant === "sigmoid" ? <path d="M 10 82 C 30 82 39 68 49 52 C 60 34 72 20 92 18" style={{ stroke: tone }} /> : null}
+        </svg>
+      </div>
+      <footer className="diagnostic-graph-footer">
+        <div>
+          <span>min</span>
+          <strong>{withUnit(min)}</strong>
+        </div>
+        <div>
+          <span>max</span>
+          <strong>{withUnit(max)}</strong>
+        </div>
+        <div>
+          <span>latest</span>
+          <strong>{withUnit(last)}</strong>
+        </div>
+        {axisLabel ? <em className="diagnostic-axis-label">{axisLabel}</em> : null}
+      </footer>
     </section>
   );
 }
@@ -1461,38 +1804,85 @@ function ParticleField({
 function BarGraph({
   title,
   rows,
+  unit,
+  formatValue,
 }: {
   title: string;
   rows: Array<{ label: string; value: number }>;
+  unit?: string;
+  formatValue?: (value: number) => string;
 }) {
   const maxValue = Math.max(...rows.map((row) => row.value), 1);
+  const totalValue = rows.reduce((sum, row) => sum + row.value, 0);
+  const formatter = formatValue ?? ((value: number) => formatNumber(value));
   return (
     <section className="mini-graph">
-      <span>{title}</span>
+      <header className="mini-graph-header">
+        <span>{title}</span>
+        <em>
+          max {formatter(maxValue)}
+          {unit ? ` ${unit}` : ""}
+        </em>
+      </header>
       {rows.map((row) => (
         <div key={row.label} className="bar-row">
           <em>{row.label}</em>
           <div>
             <i style={{ width: `${Math.max((row.value / maxValue) * 100, 4)}%` }} />
           </div>
-          <strong>{row.value}</strong>
+          <strong>
+            {formatter(row.value)}
+            {unit ? ` ${unit}` : ""}
+          </strong>
         </div>
       ))}
+      <footer className="mini-graph-footer">
+        <span>total</span>
+        <strong>
+          {formatter(totalValue)}
+          {unit ? ` ${unit}` : ""}
+        </strong>
+      </footer>
     </section>
   );
 }
 
 function EnergyGraph({ values }: { values: number[] }) {
+  const min = values.length ? Math.min(...values) : 0;
+  const max = values.length ? Math.max(...values) : 1;
+  const mean = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
   return (
     <section className="mini-graph">
-      <span>Energy distribution</span>
-      <div className="energy-bars">
+      <header className="mini-graph-header">
+        <span>Energy distribution</span>
+        <em>
+          min {min.toFixed(2)} · max {max.toFixed(2)} · mean {mean.toFixed(2)}
+        </em>
+      </header>
+      <div className="energy-bars" aria-hidden="true">
         {values.map((value, index) => (
           <i key={`energy-${index}`} style={{ height: `${Math.max(value * 100, 8)}%` }} />
         ))}
       </div>
+      <footer className="mini-graph-footer">
+        <span>steps</span>
+        <strong>{values.length}</strong>
+      </footer>
     </section>
   );
+}
+
+function formatNumber(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+  if (Math.abs(value) >= 1000) {
+    return value.toLocaleString();
+  }
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+  return value.toFixed(2);
 }
 
 function CorrelationGrid({ profile }: { profile: IngestionProfile }) {
@@ -2256,12 +2646,18 @@ function downloadBlob(filename: string, blob: Blob) {
   URL.revokeObjectURL(url);
 }
 
-async function downloadAllArtifacts(artifacts: GeneratedArtifact[]) {
+async function downloadArtifactBundle(
+  artifacts: GeneratedArtifact[],
+  bundleName = "ml-labs-generated-artifacts.zip",
+) {
+  if (artifacts.length === 0) {
+    return;
+  }
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
   artifacts.forEach((artifact) => zip.file(artifact.filename, artifact.content));
   const blob = await zip.generateAsync({ type: "blob" });
-  downloadBlob("ml-labs-generated-artifacts.zip", blob);
+  downloadBlob(bundleName, blob);
 }
 
 function findHighestCardinality(profile: IngestionProfile): ColumnProfile {
