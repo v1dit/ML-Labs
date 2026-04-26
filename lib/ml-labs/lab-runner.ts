@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import JSZip from "jszip";
 import { buildCompleteRun } from "@/lib/ml-labs/report-generator";
 import {
   prepareRuntimeBundle,
@@ -146,17 +147,21 @@ export async function resolveLabSource({
     throw new Error("Provide either a CSV file upload or a Kaggle reference to resolve.");
   }
 
-  if (file && !file.name.toLowerCase().endsWith(".csv")) {
-    throw new Error("Only CSV uploads are supported in this MVP.");
+  if (file && !isSupportedSourceUpload(file.name)) {
+    throw new Error("Only CSV or ZIP uploads are supported for source resolution.");
   }
 
   const { sourceToken, sourceDir } = await createSourceBundle();
-  const sourceFilePath = file ? path.join(sourceDir, sanitizeFilename(file.name)) : undefined;
+  let sourceFilePath = file ? path.join(sourceDir, sanitizeFilename(file.name)) : undefined;
 
   try {
     if (file && sourceFilePath) {
-      const fileBuffer = Buffer.from(await file.arrayBuffer());
-      await fs.writeFile(sourceFilePath, fileBuffer);
+      if (file.name.toLowerCase().endsWith(".zip")) {
+        sourceFilePath = await extractLargestCsvFromZip(file, sourceDir);
+      } else {
+        const fileBuffer = Buffer.from(await file.arrayBuffer());
+        await fs.writeFile(sourceFilePath, fileBuffer);
+      }
     }
 
     const inspectResult = await executePythonInspect({
@@ -503,6 +508,34 @@ function buildRunId(targetColumn: string): string {
 
 function sanitizeFilename(filename: string): string {
   return filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function isSupportedSourceUpload(filename: string): boolean {
+  const lowered = filename.toLowerCase();
+  return lowered.endsWith(".csv") || lowered.endsWith(".zip");
+}
+
+async function extractLargestCsvFromZip(file: File, sourceDir: string): Promise<string> {
+  const zip = await JSZip.loadAsync(Buffer.from(await file.arrayBuffer()));
+  const csvEntries = Object.values(zip.files).filter(
+    (entry) => !entry.dir && entry.name.toLowerCase().endsWith(".csv"),
+  );
+
+  if (!csvEntries.length) {
+    throw new Error("The uploaded ZIP does not contain any CSV files.");
+  }
+
+  const rankedEntries = await Promise.all(
+    csvEntries.map(async (entry) => ({
+      entry,
+      size: (await entry.async("uint8array")).byteLength,
+    })),
+  );
+  const largest = rankedEntries.sort((left, right) => right.size - left.size)[0];
+  const basename = path.basename(largest.entry.name);
+  const outputPath = path.join(sourceDir, `zip-${sanitizeFilename(basename)}`);
+  await fs.writeFile(outputPath, Buffer.from(await largest.entry.async("uint8array")));
+  return outputPath;
 }
 
 function describeSource({

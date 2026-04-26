@@ -19,7 +19,7 @@ export async function POST(request: Request) {
     if (hasUpload && hasKaggleInput) {
       return NextResponse.json<LabRunError>(
         {
-          error: "Provide either a CSV upload or Kaggle input for source resolution, but not both.",
+          error: "Provide either a CSV/ZIP upload or Kaggle input for source resolution, but not both.",
         },
         { status: 400 },
       );
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     if (!hasUpload && !hasKaggleInput) {
       return NextResponse.json<LabRunError>(
         {
-          error: "Provide a CSV file under `file` or a Kaggle reference under `kaggleInput`.",
+          error: "Provide a CSV/ZIP file under `file` or a Kaggle reference under `kaggleInput`.",
         },
         { status: 400 },
       );
