@@ -1456,7 +1456,14 @@ function ReportDraftingPanel({
   models: ModelFamily[];
   runResult: LabRunResult | null;
 }) {
-  const drafts = buildReportDrafts(profile, pickModelWinner(models), runResult);
+  const winner = pickModelWinner(models);
+  const drafts = buildReportDrafts(profile, winner, runResult);
+  const generatedArtifacts = useMemo(
+    () => buildGeneratedArtifacts(profile, winner, "initial"),
+    [profile, winner],
+  );
+  const pythonScripts = generatedArtifacts.filter((artifact) => artifact.filename.endsWith(".py"));
+  const pythonNames = pythonScripts.map((artifact) => artifact.filename).join(", ");
   return (
     <article className="agent-panel report-drafting-panel">
       <PanelHeader agent="Report Agent" title="Research drafts ready for export" />
@@ -1472,6 +1479,34 @@ function ReportDraftingPanel({
             </button>
           </section>
         ))}
+        <section className="report-draft-card python-bundle-card">
+          <span>python_bundle.zip</span>
+          <p>
+            All generated Python scripts in one archive
+            {pythonNames ? `: ${pythonNames}.` : "."}
+          </p>
+          <div className="python-bundle-actions">
+            <button
+              type="button"
+              className="bundle-action"
+              disabled={pythonScripts.length === 0}
+              onClick={() =>
+                void downloadArtifactBundle(pythonScripts, "ml-labs-python-bundle.zip")
+              }
+            >
+              Download Python bundle
+            </button>
+            {pythonScripts.map((artifact) => (
+              <button
+                key={artifact.filename}
+                type="button"
+                onClick={() => downloadTextFile(artifact.filename, artifact.content)}
+              >
+                {artifact.filename}
+              </button>
+            ))}
+          </div>
+        </section>
       </div>
     </article>
   );

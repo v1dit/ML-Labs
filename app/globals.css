@@ -1726,7 +1726,7 @@ a {
 .report-draft-grid {
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
 }
 
@@ -1735,6 +1735,56 @@ a {
   align-content: start;
   gap: 12px;
   padding: 14px;
+}
+
+.python-bundle-card {
+  border-color: rgba(143, 183, 255, 0.3);
+  background: linear-gradient(180deg, rgba(143, 183, 255, 0.08), rgba(8, 10, 12, 0.95));
+}
+
+.python-bundle-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.python-bundle-actions .bundle-action {
+  border: 1px solid rgba(143, 183, 255, 0.45);
+  background: rgba(143, 183, 255, 0.18);
+  color: var(--ide-text);
+  border-radius: 6px;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.python-bundle-actions .bundle-action:hover:not(:disabled) {
+  border-color: rgba(143, 183, 255, 0.7);
+  background: rgba(143, 183, 255, 0.26);
+}
+
+.python-bundle-actions .bundle-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.python-bundle-actions button:not(.bundle-action) {
+  border: 1px solid var(--ide-line-strong);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ide-muted);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font: inherit;
+  font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.python-bundle-actions button:not(.bundle-action):hover {
+  border-color: rgba(143, 183, 255, 0.45);
+  background: rgba(143, 183, 255, 0.08);
+  color: var(--ide-text);
 }
 
 @keyframes panel-rise {
