@@ -1,90 +1,97 @@
-<img width="1237" height="401" alt="Screenshot 2026-04-26 at 5 05 33 PM" src="https://github.com/user-attachments/assets/20e203c9-9adb-4ae7-ba45-c511b70ac761" />
+<p align="center">
+  <img width="900" alt="ML-Labs Screenshot" src="https://github.com/user-attachments/assets/20e203c9-9adb-4ae7-ba45-c511b70ac761" />
+</p>
 
-**An entire research lab at your fingertips.**
+<h2 align="center">An entire research lab at your fingertips.</h2>
+
+<p align="center">
+ML-Labs is an autonomous machine learning system that executes the full research lifecycle end-to-end.
+</p>
 
 ---
 
-ML-Labs is an end-to-end machine learning platform where autonomous agents replicate the workflow of a full research team.
+## Overview
 
-Instead of manually assembling pipelines, sourcing data, and iterating on models, ML-Labs coordinates a system of agents that:
+ML-Labs replaces fragmented ML workflows with a coordinated multi-agent system.
 
-* Discover and ingest datasets (CSV or Kaggle)
-* Profile and analyze data distributions
-* Construct and execute experiments
-* Train, test, and optimize models
-* Run statistical validation and accuracy analysis
-* Generate visualizations and diagnostics
-* Produce structured reports and research-style outputs
-* Serve predictions through a unified API
+Instead of manually assembling pipelines, sourcing data, and iterating on models, ML-Labs runs the entire loop:
 
-From raw data to validated results and documentation—fully automated.
+- Data discovery and ingestion  
+- Statistical profiling and feature preparation  
+- Experiment design and execution  
+- Model training, testing, and optimization  
+- Validation and comparative analysis  
+- Visualization and diagnostics  
+- Structured research outputs  
+- Production-ready prediction APIs  
+
+From raw data to validated results—fully automated.
 
 ---
 
 ## Agent System
 
-ML-Labs is organized as a coordinated swarm of specialized agents, each responsible for a stage of the research lifecycle:
+ML-Labs operates as a tightly coordinated system of specialized agents:
 
-* **Data Sourcing Agent**
-  Locates and ingests datasets (local or Kaggle)
+- **Data Sourcing Agent**  
+  Ingests datasets (CSV, Kaggle)
 
-* **Data Analyst Agent**
-  Profiles distributions, detects anomalies, and prepares features
+- **Data Analyst Agent**  
+  Profiles distributions, detects anomalies, prepares features
 
-* **Computation Agent**
-  Grounds research in real math and physics in a user-facing manner through KaTex
+- **Computation Agent**  
+  Grounds outputs in formal math (KaTeX-rendered)
 
-* **Experiment Engineer Agent**
-  Designs experiment structure and selects modeling strategies
+- **Experiment Engineer Agent**  
+  Designs experiments and selects modeling strategies
 
-* **Modeling Agent**
-  Trains and evaluates multiple sklearn models across tasks
+- **Modeling Agent**  
+  Trains and evaluates multiple models (scikit-learn)
 
-* **Optimization Agent**
-  Iterates on configurations to improve performance
+- **Optimization Agent**  
+  Iterates configurations for performance gains
 
-* **Statistical Analysis Agent**
-  Runs validation, accuracy metrics, and comparative evaluation
+- **Statistical Analysis Agent**  
+  Runs validation, metrics, and comparative evaluation
 
-* **Visualization Agent**
-  Generates plots, graphs, and interpretable outputs
+- **Visualization Agent**  
+  Produces interpretable plots and diagnostics
 
-* **Report / Research Agent**
-  Produces structured summaries, experiment logs, and research-style drafts
+- **Research Agent**  
+  Generates structured reports and experiment logs
 
-* **Prediction Agent**
-  Exposes trained models for inference via API
+- **Prediction Agent**  
+  Serves trained models via API
 
-These agents operate as a coordinated system, not isolated tools.
+Agents operate as a unified system—not isolated tools.
 
 ---
 
-## API Surface
+## API
 
-* `GET /api/lab/demo`
-  Deterministic, real-backed experiment snapshots
+GET  /api/lab/demo
+POST /api/lab/run
+POST /api/lab/predict
 
-* `POST /api/lab/run`
-  Executes full multi-agent experiment pipeline
-
-* `POST /api/lab/predict`
-  Serves predictions from completed runs
+- `/demo` → deterministic experiment snapshots  
+- `/run` → full multi-agent pipeline execution  
+- `/predict` → inference on trained models  
 
 ---
 
 ## Tech Stack
 
-* **Backend:** Node.js (API orchestration layer)
-* **ML Execution:** Python (scikit-learn, pandas, NumPy)
-* **Experiment Engine:** Custom multi-agent orchestration system
-* **Data Sources:** CSV + Kaggle datasets
-* **Frontend:** Next.js (consumer layer for outputs and visualization)
+- **Backend:** Node.js (orchestration layer)  
+- **ML Execution:** Python (scikit-learn, pandas, NumPy)  
+- **Engine:** Custom multi-agent system  
+- **Data Sources:** CSV, Kaggle  
+- **Frontend:** Next.js  
 
 ---
 
-## Run locally
+## Local Setup
 
-```bash id="ml1"
+```bash
 npm install
 
 python3 -m venv .venv
@@ -93,39 +100,3 @@ python3 -m venv .venv
 pip install -r requirements.txt
 
 npm run dev
-```
-
----
-
-## Example
-
-Run a full experiment:
-
-```bash id="ml2"
-curl -X POST http://localhost:3000/api/lab/run \
--F "file=@data.csv" \
--F "targetColumn=target" \
--F "intentPrompt=Predict target variable"
-```
-
----
-
-## Why it matters
-
-Machine learning today is constrained by coordination cost.
-
-A single experiment requires:
-
-* Data acquisition
-* Cleaning and profiling
-* Model design
-* Iteration and tuning
-* Evaluation and reporting
-
-ML-Labs collapses this into a single execution layer.
-
-Not by simplifying the work—but by automating the entire research loop.
-
----
-
-ML-Labs turns machine learning from a manual process into an autonomous system.
