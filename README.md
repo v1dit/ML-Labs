@@ -1,6 +1,4 @@
-# ML-Labs
-
-<img width="1536" height="1024" alt="ml-labs-wordmark" src="https://github.com/user-attachments/assets/412333e0-b9c8-4b9e-8a20-c96ca9ecd44b" />
+<img width="1237" height="401" alt="Screenshot 2026-04-26 at 5 05 33 PM" src="https://github.com/user-attachments/assets/20e203c9-9adb-4ae7-ba45-c511b70ac761" />
 
 **An entire research lab at your fingertips.**
 
