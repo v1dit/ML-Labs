@@ -1,5 +1,7 @@
 # ML-Labs
 
+<img width="1536" height="1024" alt="ml-labs-wordmark" src="https://github.com/user-attachments/assets/412333e0-b9c8-4b9e-8a20-c96ca9ecd44b" />
+
 **An entire research lab at your fingertips.**
 
 ---
