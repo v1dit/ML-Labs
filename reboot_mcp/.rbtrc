@@ -1,0 +1,2 @@
+# Run the durable-mcp server with hot reload.
+dev run --python --application=main.py --watch=**/*.py

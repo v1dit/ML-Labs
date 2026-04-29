@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "enerva-ml": {
+      "url": "http://localhost:9991/mcp"
+    }
+  }
+}
